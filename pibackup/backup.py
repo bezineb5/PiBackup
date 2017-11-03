@@ -132,7 +132,11 @@ def get_unique_name(source_path):
         id_path = os.path.join(source_path, UNIQUE_ID_FILE)
         if os.path.exists(id_path):
             with open(id_path, 'r') as f:
-                return f.readline()
+                file_unique_id = f.readline()
+                keepcharacters = (' ','.','_')
+                file_unique_id = "".join(c for c in file_unique_id if c.isalnum() or c in keepcharacters).rstrip()
+                if len(file_unique_id) > 0:
+                    return file_unique_id
 
         unique_id = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6))
         with open(id_path, 'w') as f:
