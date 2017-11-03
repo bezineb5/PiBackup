@@ -1,0 +1,4 @@
+touchphat
+watchdog
+sh
+git+https://github.com/bezineb5/lycheesync.git@perf_optimizations

@@ -1,0 +1,27 @@
+version: '2'
+services: 
+  lychee:
+    image: lsioarmhf/lychee
+    restart: always
+    ports: 
+      - 80:80
+    environment:
+      - PGID=1000
+      - PUID=1000
+    volumes: 
+      - /data/lychee/uploads:/pictures
+      - /data/lychee/config:/config
+      - /share:/share
+
+  mariadb:
+    image: jsurf/rpi-mariadb:latest
+    restart: always
+    ports:
+      - 127.0.0.1:3306:3306
+    environment: 
+      - MYSQL_ROOT_PASSWORD=4Hh6spFC3Gk8hdgweV--qu524rbxABP9hL
+      - MYSQL_DATABASE=lychee
+      - MYSQL_USER=lychee
+      - MYSQL_PASSWORD=Fp-G75jYsGJUpbHvPmpVwkExPrUn_3GY78
+    volumes: 
+      - /data/mariadb:/var/lib/mysql
