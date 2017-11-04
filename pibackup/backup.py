@@ -277,14 +277,17 @@ def main():
 def init_logging(directory):
     if not os.path.exists(directory):
         os.makedirs(directory)
-    
+
     log_file = os.path.join(directory, "pibackup.log")
+    handler = logging.handlers.TimedRotatingFileHandler(log_file,
+                                                        when="d",
+                                                        interval=1,
+                                                        backupCount=60)
 
     logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(message)s',
-                    datefmt='%Y-%m-%d %H:%M:%S',
-                    filename=log_file,
-                    filemode='w')
+                        format='%(asctime)s - %(message)s',
+                        datefmt='%Y-%m-%d %H:%M:%S',
+                        handlers=[handler])
 
 if __name__ == "__main__":
     init_logging(LOG_DIRECTORY)
