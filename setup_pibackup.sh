@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# It currently (2017-11-01) only works with Raspbian Jessie, because of Docker
+
 WIFI_NETWORK_NAME=PiBackup
 WIFI_NETWORK_PASSWORD=W1f1B0ckup
 SAMBA_USER=pi
@@ -132,17 +134,10 @@ MountFlags=shared" | sudo tee /etc/systemd/system/systemd-udevd.service > /dev/n
 sudo service systemd-udevd restart
 
 # Install application
-sudo apt-get -y install python3 python3-dev python3-smbus git rsync
+sudo apt-get -y install libjpeg-dev zlib1g-dev python3 python3-dev python3-smbus git rsync
 
 sudo pip3 install -r requirements.txt
 sudo groupadd plugdev
 sudo usermod -aG plugdev pi
 
-# Lychee sync
-sudo apt-get install -y git python3-dev libjpeg-dev zlib1g-dev
-git clone https://github.com/GustavePate/lycheesync
-sudo pip3 install -r lycheesync/requirements.txt
-
-export LANGUAGE="en_GB.UTF-8"
-export LC_ALL="en_GB.UTF-8"
-export LC_CTYPE="en_GB.UTF-8"
+crontab -l | { cat; echo "@reboot /home/pi/PiBackup/start.sh"; } | crontab
