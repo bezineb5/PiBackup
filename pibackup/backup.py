@@ -5,11 +5,12 @@ import signal
 import string
 import threading
 import time
-from functools import wraps
 from datetime import datetime, timedelta
+from functools import wraps
 
 import sh
 import touchphat
+import werkzeug
 from lycheesync.sync import perform_sync
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
@@ -18,6 +19,7 @@ OBSERVE_SD_PATH = "/var/run/usbmount"
 BACKUP_PATH = "/share"
 LYCHEE_DATA_PATH = "/data/lychee"
 LYCHEESYNC_CONF_FILE = os.path.join(os.getcwd(), "lychee/lycheesync.conf")
+LOG_DIRECTORY = os.path.join(BACKUP_PATH, "logs")
 
 UNIQUE_ID_FILE = "unique.id"
 DEFAULT_UNIQUE_ID = "drive"
@@ -48,6 +50,11 @@ class SDCardWatcher(FileSystemEventHandler):
 
 
 class SharedDirectoryWatcher(FileSystemEventHandler):
+
+    def __init__(self):
+        self._exclude_path = LOG_DIRECTORY + os.sep
+        self._exclude = LOG_DIRECTORY
+
     def on_any_event(self, event):
         """Catch-all event handler.
 
@@ -56,6 +63,13 @@ class SharedDirectoryWatcher(FileSystemEventHandler):
         :type event:
             :class:`DirCreatedEvent` or :class:`FileCreatedEvent`
         """
+
+        # Ignore logging
+        if event:
+            path = event.src_path
+            if path:
+                if path.startswith(self._exclude_path) or path == self._exclude:
+                    return
 
         global next_lychee_sync
         next_lychee_sync = datetime.now() + timedelta(seconds=5)
@@ -86,6 +100,7 @@ def blink(led_id):
             t = threading.Thread(target=worker, daemon=True)
             t.start()
 
+            # Make the button blink
             while t.is_alive():
                 touchphat.set_led(led_id, led_state)
                 led_state = not led_state
@@ -133,12 +148,12 @@ def get_unique_name(source_path):
         if os.path.exists(id_path):
             with open(id_path, 'r') as f:
                 file_unique_id = f.readline()
-                keepcharacters = (' ','.','_')
-                file_unique_id = "".join(c for c in file_unique_id if c.isalnum() or c in keepcharacters).rstrip()
-                if len(file_unique_id) > 0:
+                file_unique_id = werkzeug.utils.secure_filename(file_unique_id)
+                if file_unique_id:
                     return file_unique_id
 
-        unique_id = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6))
+        random_string = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6))
+        unique_id = werkzeug.utils.secure_filename(random_string)
         with open(id_path, 'w') as f:
             f.write(unique_id)
     except:
@@ -162,6 +177,10 @@ def perform_backup(source_path):
     # Flush disk buffers
     sh.sync()
     log.info("Finished backup for %s", source_path)
+
+    # Schedule a lychee sync for now
+    global next_lychee_sync
+    next_lychee_sync = datetime.now()
 
 
 @blink(BUTTON_LYCHEE_SYNC)
@@ -193,7 +212,7 @@ def wait_blink(delay):
 def handle_touch(event):
     wait_blink(2.0)
     with sh.contrib.sudo:
-        sh.shutdown("-h", "now")
+        sh.shutdown("--poweroff", "now")
 
 
 def get_observer_for_cards():
@@ -255,9 +274,18 @@ def main():
     exit_gracefully(None, None)
 
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO,
-                        format='%(asctime)s - %(message)s',
-                        datefmt='%Y-%m-%d %H:%M:%S')
+def init_logging(directory):
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    
+    log_file = os.path.join(directory, "pibackup.log")
 
+    logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(message)s',
+                    datefmt='%Y-%m-%d %H:%M:%S',
+                    filename=log_file,
+                    filemode='w')
+
+if __name__ == "__main__":
+    init_logging(LOG_DIRECTORY)
     main()
