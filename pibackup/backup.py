@@ -141,9 +141,10 @@ def long_press(button_id, delay, default_state=False):
 
 
 def get_unique_name(source_path):
-    unique_id = DEFAULT_UNIQUE_ID
+    unique_id = None
 
     try:
+        # First try to use the UID stored on the drive
         id_path = os.path.join(source_path, UNIQUE_ID_FILE)
         if os.path.exists(id_path):
             with open(id_path, 'r') as f:
@@ -152,12 +153,18 @@ def get_unique_name(source_path):
                 if file_unique_id:
                     return file_unique_id
 
+        # Otherwise, generate one and try to store it on the device
         random_string = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6))
         unique_id = werkzeug.utils.secure_filename(random_string)
         with open(id_path, 'w') as f:
             f.write(unique_id)
     except:
-        pass
+        log.warning("Unable to generate a unique ID, using default", exc_info=True)
+        unique_id = None
+
+    # Everything failed
+    if not unique_id:
+        unique_id = DEFAULT_UNIQUE_ID
 
     return unique_id
 
@@ -290,5 +297,8 @@ def init_logging(directory):
                         handlers=[handler])
 
 if __name__ == "__main__":
-    init_logging(LOG_DIRECTORY)
-    main()
+    try:
+        init_logging(LOG_DIRECTORY)
+        main()
+    except:
+        log.exception("Unable to start PiBackup")
