@@ -1,7 +1,5 @@
 #!/bin/bash
 
-# It currently (2017-11-01) only works with Raspbian Jessie, because of Docker
-
 WIFI_NETWORK_NAME=PiBackup
 WIFI_NETWORK_PASSWORD=W1f1B0ckup
 SAMBA_USER=pi
@@ -12,9 +10,9 @@ set -o errexit
 set -o pipefail
 set -o nounset
 
-# Must be sudo
-if [ -z "$SUDO_USER" ]; then
-    echo "This script is only allowed to run from sudo";
+# Must be on Debian Jessie
+if [ `lsb_release --release --short` != "8.0" ]; then
+    echo "It currently (2017-11-01) only works with Raspbian Jessie, because of Docker";
     exit -1;
 fi
 
@@ -98,8 +96,8 @@ Writeable = Yes
 only guest = no
 create mask = 0777
 directory mask = 0777
-Public = yes" | sudo tee -a /etc/samba/smb.conf > /dev/null
-#echo "Guest ok = yes" | sudo tee -a /etc/samba/smb.conf > /dev/null
+Public = yes
+Guest ok = yes" | sudo tee -a /etc/samba/smb.conf > /dev/null
 
 ## Create user account
 (echo "$SAMBA_PASSWORD"; echo "$SAMBA_PASSWORD") | sudo smbpasswd -s -a $SAMBA_USER
@@ -122,10 +120,14 @@ rm get-pip.py
 sudo pip install docker-compose
 docker-compose --version
 
-# USBMount
-sudo apt-get -y install usbmount
+# GPhoto2
+sudo apt-get -y install gphoto2 gphotofs
+
+# USBMount with support for NTFS and MTP
+sudo apt-get -y install usbmount fuse ntfs-3g jmtpfs
 
 sudo sed -i "/FS_MOUNTOPTIONS=\"\"/c\FS_MOUNTOPTIONS=\"-fstype=vfat,flush,gid=plugdev,dmask=0007,fmask=0117\"" /etc/usbmount/usbmount.conf
+# FILESYSTEMS="vfat ext2 ext3 ext4 hfsplus jmtpfs ntfs fuseblk"
 
 echo ".include /usr/lib/systemd/system/systemd-udevd.service
 [Service]
@@ -140,4 +142,9 @@ sudo pip3 install -r requirements.txt
 sudo groupadd plugdev
 sudo usermod -aG plugdev pi
 
-crontab -l | { cat; echo "@reboot /home/pi/PiBackup/start.sh"; } | crontab
+cd lychee
+docker-compose pull
+docker-compose -d up
+cd ..
+
+crontab -l | { cat; echo "@reboot `pwd`/start.sh"; } | crontab
