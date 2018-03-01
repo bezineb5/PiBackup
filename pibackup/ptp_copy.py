@@ -68,7 +68,7 @@ def rsync_camera(camera, target_path):
             log.info("Copy %s to %s", file_path, destination_path)
             folder, name = os.path.split(str(file_path))
             camera_file = camera.file_get(folder, name, gp.GP_FILE_TYPE_NORMAL)
-            camera_file.file_save(str(destination_path))
+            camera_file.copy(str(destination_path))
 
 
     log.info("Finished backup for %s", camera)
