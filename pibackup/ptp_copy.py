@@ -18,10 +18,12 @@ def rsync_all_cameras(target_dir):
         log.info("Camera[{index}] = {name}, {address}".format(index=n, name=name, address=addr))
         n += 1
 
+        log.info("Starting backup for %s to %s", name, target_path)
         target_camera_path = target_path.joinpath(_get_unique_id(name))
         camera = _get_camera(addr)
         rsync_camera(camera, target_camera_path)
         camera.exit()
+        log.info("Finished backup for %s", name)
 
 
 def _get_camera(address):
@@ -53,8 +55,6 @@ def _enumerate_camera_dir(camera, path):
 
     
 def rsync_camera(camera, target_path):
-    log.info("Starting backup for %s to %s", camera, target_path)
-
     start_path = pathlib.Path('/')
 
     for file_path in _enumerate_camera_dir(camera, start_path):
@@ -65,13 +65,11 @@ def rsync_camera(camera, target_path):
             # Create the folder
             os.makedirs(str(destination_path.parent), exist_ok=True)
 
+            # Copy the file
             log.info("Copy %s to %s", file_path, destination_path)
             folder, name = os.path.split(str(file_path))
             camera_file = camera.file_get(folder, name, gp.GP_FILE_TYPE_NORMAL)
-            camera_file.copy(str(destination_path))
-
-
-    log.info("Finished backup for %s", camera)
+            camera_file.save(str(destination_path))
 
 
 def get_camera_file_info(camera, path):
