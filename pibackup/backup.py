@@ -10,10 +10,13 @@ from functools import wraps
 
 import sh
 import touchphat
+import usb1
 import werkzeug
 from lycheesync.sync import perform_sync
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
+
+import ptp_copy
 
 OBSERVE_SD_PATH = "/var/run/usbmount"
 BACKUP_PATH = "/share"
@@ -26,6 +29,7 @@ DEFAULT_UNIQUE_ID = "drive"
 
 BUTTON_POWER = "Back"
 BUTTON_RSYNC = "A"
+BUTTON_GPHOTO2_SYNC = "B"
 BUTTON_LYCHEE_SYNC = "D"
 
 log = logging.getLogger(__name__)
@@ -46,7 +50,7 @@ class SDCardWatcher(FileSystemEventHandler):
         if event is None or (not event.is_directory and not os.path.islink(event.src_path)):
             return
 
-        perform_backup(event.src_path)
+        mass_storage_backup(event.src_path)
 
 
 class SharedDirectoryWatcher(FileSystemEventHandler):
@@ -171,7 +175,7 @@ def get_unique_name(source_path):
 
 @blink(BUTTON_RSYNC)
 @no_parallel_run
-def perform_backup(source_path):
+def mass_storage_backup(source_path):
     if source_path is None:
         return
 
@@ -242,12 +246,56 @@ def get_observer_for_share():
     return observer
 
 
+@blink(BUTTON_GPHOTO2_SYNC)
+@no_parallel_run
+def gphoto_backup(device):
+    if device is None:
+        return
+
+    ptp_copy.rsync_all_cameras(BACKUP_PATH)
+
+    # Schedule a lychee sync for now
+    global next_lychee_sync
+    next_lychee_sync = datetime.now()
+ 
+
+def hotplug_callback(context, device, event):
+    log.info("Device %s: %s" % (
+        {
+            usb1.HOTPLUG_EVENT_DEVICE_ARRIVED: 'arrived',
+            usb1.HOTPLUG_EVENT_DEVICE_LEFT: 'left',
+        }[event],
+        device,
+    ))
+    # Note: cannot call synchronous API in this function.
+
+    if event == usb1.HOTPLUG_EVENT_DEVICE_ARRIVED:
+        thread = threading.Thread(target = gphoto_backup, args = (device, ))
+        thread.start()
+
+
+def monitor_usb_devices():
+    with usb1.USBContext() as context:
+        if not context.hasCapability(usb1.CAP_HAS_HOTPLUG):
+            log.error('Hotplug support is missing. Please update your libusb version.')
+            return
+        log.info('Registering hotplug callback...')
+        opaque = context.hotplugRegisterCallback(hotplug_callback)
+        log.info('Callback registered. Monitoring events, ^C to exit')
+        try:
+            while not exiting:
+                context.handleEvents()
+        except (KeyboardInterrupt, SystemExit):
+            log.info('Exiting')
+
+
 def main():
     log.info("Starting PiBackup")
 
     global next_lychee_sync
     observer = get_observer_for_cards()
     observer_share = get_observer_for_share()
+    monitor_usb_devices()
 
     touchphat.led_on(BUTTON_POWER)
 
@@ -281,7 +329,7 @@ def main():
     exit_gracefully(None, None)
 
 
-def init_logging(directory):
+def _init_logging(directory):
     if not os.path.exists(directory):
         os.makedirs(directory)
 
@@ -298,7 +346,7 @@ def init_logging(directory):
 
 if __name__ == "__main__":
     try:
-        init_logging(LOG_DIRECTORY)
+        _init_logging(LOG_DIRECTORY)
         main()
     except:
         log.exception("Unable to start PiBackup")

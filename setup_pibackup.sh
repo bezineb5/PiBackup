@@ -121,7 +121,7 @@ sudo pip install docker-compose
 docker-compose --version
 
 # GPhoto2
-sudo apt-get -y install gphoto2 gphotofs
+sudo apt-get -y install gphoto2 libgphoto2-dev libusb-1.0-0
 
 # USBMount with support for NTFS and MTP
 sudo apt-get -y install usbmount fuse ntfs-3g jmtpfs

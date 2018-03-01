@@ -1,4 +1,16 @@
-touchphat
-watchdog
-sh
+# libusb1 monitors USB devices
+libusb1>=1.6.4
+
+# gphoto2 is a library to access cameras (but not mass storage devices)
+gphoto2>=1.8.2
+
+# sh simplifies shell commands 
+sh>=1.12.14
+
+# For the path monitoring
+watchdog>=0.8.3
+
+# Touchphat is a pHat with buttons: https://shop.pimoroni.com/products/touch-phat
+touchphat>=0.0.1
+
 git+https://github.com/bezineb5/lycheesync.git@perf_optimizations
