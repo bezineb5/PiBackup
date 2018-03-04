@@ -182,6 +182,9 @@ def mass_storage_backup(source_path):
     unique_id = get_unique_name(source_path)
     destination_path = os.path.join(BACKUP_PATH, unique_id) + os.sep
 
+    # Create the folder
+    os.makedirs(destination_path, exist_ok=True)
+
     log.info("Starting backup for %s to %s", source_path, destination_path)
     # File synchronization
     sh.rsync("-a", "--chmod=Du=rwx,Dgo=rwx,Fu=rw,Fog=rw", source_path + os.sep, destination_path)
@@ -196,11 +199,11 @@ def mass_storage_backup(source_path):
 
 @blink(BUTTON_LYCHEE_SYNC)
 @no_parallel_run
-def sync_lychee():
+def sync_lychee(sanity_check=False):
     log.info("Starting Lychee synchronization")
 
     try:
-        perform_sync(False, 'normal',False, False, True, False, BACKUP_PATH, LYCHEE_DATA_PATH, LYCHEESYNC_CONF_FILE)
+        perform_sync(False, 'normal', True, sanity_check, True, False, BACKUP_PATH, LYCHEE_DATA_PATH, LYCHEESYNC_CONF_FILE)
     except Exception as e:
         log.exception("Unable to perform Lychee synchronization")
 
@@ -211,7 +214,7 @@ def sync_lychee():
 
 @touchphat.on_release(BUTTON_LYCHEE_SYNC)
 def handle_release(event):
-    sync_lychee()
+    sync_lychee(sanity_check=True)
 
 
 @blink(BUTTON_POWER)
@@ -253,6 +256,9 @@ def gphoto_backup(device):
         return
 
     ptp_copy.rsync_all_cameras(BACKUP_PATH)
+
+    # Flush disk buffers
+    sh.sync()
 
     # Schedule a lychee sync for now
     global next_lychee_sync

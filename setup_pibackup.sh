@@ -86,6 +86,7 @@ sudo apt-get -y install samba samba-common-bin
 
 ## Create shared directory
 sudo mkdir -m 1777 /share
+sudo chmod g+s /share
 
 ## Configure network share
 echo "[share]
