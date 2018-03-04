@@ -202,6 +202,11 @@ def mass_storage_backup(source_path):
 def sync_lychee(sanity_check=False):
     log.info("Starting Lychee synchronization")
 
+    if sanity_check:
+        # Delete broken links
+        log.info("Removed broken symlinks for Lychee")
+        sh.find(LYCHEE_DATA_PATH, "-xtype", "l", "-delete")
+
     try:
         perform_sync(False, 'normal', True, sanity_check, True, False, BACKUP_PATH, LYCHEE_DATA_PATH, LYCHEESYNC_CONF_FILE)
     except Exception as e:
