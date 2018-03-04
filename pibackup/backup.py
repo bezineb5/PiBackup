@@ -199,16 +199,19 @@ def mass_storage_backup(source_path):
 
 @blink(BUTTON_LYCHEE_SYNC)
 @no_parallel_run
-def sync_lychee(sanity_check=False):
+def sync_lychee(complete_sync=False):
     log.info("Starting Lychee synchronization")
 
-    if sanity_check:
+    if complete_sync:
         # Delete broken links
-        log.info("Removed broken symlinks for Lychee")
+        log.info("Removing broken symlinks for Lychee")
         sh.find(LYCHEE_DATA_PATH, "-xtype", "l", "-delete")
+        exclusive_mode = 'replace'
+    else:
+        exclusive_mode = 'normal'
 
     try:
-        perform_sync(False, 'normal', True, sanity_check, True, False, BACKUP_PATH, LYCHEE_DATA_PATH, LYCHEESYNC_CONF_FILE)
+        perform_sync(False, exclusive_mode, True, False, True, False, BACKUP_PATH, LYCHEE_DATA_PATH, LYCHEESYNC_CONF_FILE)
     except Exception as e:
         log.exception("Unable to perform Lychee synchronization")
 
@@ -219,7 +222,7 @@ def sync_lychee(sanity_check=False):
 
 @touchphat.on_release(BUTTON_LYCHEE_SYNC)
 def handle_release(event):
-    sync_lychee(sanity_check=True)
+    sync_lychee(complete_sync=True)
 
 
 @blink(BUTTON_POWER)
@@ -328,14 +331,16 @@ def main():
     signal.signal(signal.SIGINT, exit_gracefully)
     signal.signal(signal.SIGTERM, exit_gracefully)
 
-    try:
-        while True:
+    while True:
+        try:
             time.sleep(1)
             if next_lychee_sync and next_lychee_sync < datetime.now():
                 next_lychee_sync = None
                 sync_lychee()
-    except KeyboardInterrupt:
-        pass
+        except (KeyboardInterrupt, SystemExit):
+            break
+        except:
+            log.exception("Unable to synchronize Lychee")
 
     exit_gracefully(None, None)
 
