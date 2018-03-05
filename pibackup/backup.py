@@ -288,7 +288,12 @@ def hotplug_callback(context, device, event):
         thread.start()
 
 
-def monitor_usb_devices():
+def _monitor_usb_devices():
+    thread = threading.Thread(target=_monitor_usb_devices_thread)
+    thread.start()
+
+
+def _monitor_usb_devices_thread():
     with usb1.USBContext() as context:
         if not context.hasCapability(usb1.CAP_HAS_HOTPLUG):
             log.error('Hotplug support is missing. Please update your libusb version.')
@@ -334,6 +339,7 @@ def main():
     while True:
         try:
             time.sleep(1)
+            log
             if next_lychee_sync and next_lychee_sync < datetime.now():
                 next_lychee_sync = None
                 sync_lychee()
