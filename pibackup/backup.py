@@ -288,7 +288,7 @@ def hotplug_callback(context, device, event):
         thread.start()
 
 
-def _monitor_usb_devices():
+def monitor_usb_devices():
     thread = threading.Thread(target=_monitor_usb_devices_thread)
     thread.start()
 
