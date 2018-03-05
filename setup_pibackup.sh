@@ -143,9 +143,7 @@ sudo pip3 install -r requirements.txt
 sudo groupadd plugdev
 sudo usermod -aG plugdev pi
 
-cd lychee
-docker-compose pull
-docker-compose -d up
-cd ..
+docker-compose -f ./lychee/docker-compose.yml pull
+docker-compose -f ./lychee/docker-compose.yml up -d
 
 crontab -l | { cat; echo "@reboot `pwd`/start.sh"; } | crontab

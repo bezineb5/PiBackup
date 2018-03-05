@@ -263,7 +263,11 @@ def gphoto_backup(device):
     if device is None:
         return
 
-    ptp_copy.rsync_all_cameras(BACKUP_PATH)
+    number_of_copies = ptp_copy.rsync_all_cameras(BACKUP_PATH)
+
+    # No file copied
+    if number_of_copies <= 0:
+        return
 
     # Flush disk buffers
     sh.sync()
