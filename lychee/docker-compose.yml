@@ -1,16 +1,26 @@
 version: '2'
 services: 
   lychee:
-    image: lsioarmhf/lychee
+    depends_on: 
+      - mariadb
+    image: lycheeorg/lychee
     restart: always
     ports: 
       - 80:80
     environment:
       - PGID=1000
       - PUID=1000
-    volumes: 
+      - PHP_TZ=UTC
+      - DB_CONNECTION=mysql
+      - DB_HOST=mariadb
+      - DB_PORT=3306
+      - DB_DATABASE=lychee
+      - DB_USERNAME=lychee
+      - DB_PASSWORD=Fp-G75jYsGJUpbHvPmpVwkExPrUn_3GY78
+    volumes:
       - /data/lychee/uploads:/pictures
-      - /data/lychee/config:/config
+      - /data/lychee/conf:/config
+      - /data/lychee/sym:/sym
       - /share:/share
 
   mariadb:

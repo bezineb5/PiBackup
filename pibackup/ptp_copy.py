@@ -7,24 +7,26 @@ import werkzeug
 
 log = logging.getLogger(__name__)
 
-gp.check_result(gp.use_python_logging())
+callback_obj = gp.check_result(gp.use_python_logging())
+
 
 def rsync_all_cameras(target_dir):
+    """
+    Backup all cameras to the target directory
+    """
     target_path = pathlib.Path(target_dir)
     cameras = gp.check_result(gp.gp_camera_autodetect())
 
-    n = 0
     number_of_copies = 0
-    for name, addr in cameras:
-        log.info("Camera[{index}] = {name}, {address}".format(index=n, name=name, address=addr))
-        n += 1
+    for index, (name, addr) in enumerate(cameras):
+        log.info("Camera[%d] = %s, %s", index, name, addr)
 
         log.info("Starting backup for %s to %s", name, target_path)
         target_camera_path = target_path.joinpath(_get_unique_id(name))
         camera = _get_camera(addr)
         copies_for_camera = rsync_camera(camera, target_camera_path)
         camera.exit()
-        log.info("Finished backup for %s, %s files copied", name, number_of_copies)
+        log.info("Finished backup for %s, %s files copied", name, copies_for_camera)
         number_of_copies += copies_for_camera
 
     return number_of_copies
@@ -57,13 +59,16 @@ def _enumerate_camera_dir(camera, path):
         for file_path in _enumerate_camera_dir(camera, folder_path):
             yield file_path
 
-    
+
 def rsync_camera(camera, target_path):
+    """
+    Backup the specified camera to the target directory
+    """
     number_of_copies = 0
-    start_path = pathlib.Path('/')
+    start_path = pathlib.Path("/")
 
     for file_path in _enumerate_camera_dir(camera, start_path):
-        relative_path = pathlib.Path('.' + str(file_path))
+        relative_path = pathlib.Path("." + str(file_path))
         destination_path = target_path.joinpath(relative_path)
 
         if not destination_path.exists():
@@ -81,6 +86,8 @@ def rsync_camera(camera, target_path):
 
 
 def get_camera_file_info(camera, path):
+    """
+    Get the file info for the specified file
+    """
     folder, name = os.path.split(path)
-    return gp.check_result(
-        gp.gp_camera_file_get_info(camera, folder, name))
+    return gp.check_result(gp.gp_camera_file_get_info(camera, folder, name))

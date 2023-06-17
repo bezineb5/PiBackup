@@ -1,3 +1,4 @@
+import argparse
 import logging
 import os
 import random
@@ -7,6 +8,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 from functools import wraps
+from typing import Optional
 
 import sh
 import touchphat
@@ -33,11 +35,18 @@ BUTTON_GPHOTO2_SYNC = "B"
 BUTTON_LYCHEE_SYNC = "D"
 
 log = logging.getLogger(__name__)
-exiting = False
+exiting = threading.Event()
+# The next Lychee synchronization is scheduled at this time. It must be atomically modified
 next_lychee_sync = None
+next_lychee_sync_lock = threading.Lock()
+enable_lychee_sync = True
 
 
 class SDCardWatcher(FileSystemEventHandler):
+    """
+    Watchdog event handler for SD card insertion/removal.
+    """
+
     def on_created(self, event):
         """Called when a file or directory is created.
 
@@ -47,19 +56,24 @@ class SDCardWatcher(FileSystemEventHandler):
             :class:`DirCreatedEvent` or :class:`FileCreatedEvent`
         """
 
-        if event is None or (not event.is_directory and not os.path.islink(event.src_path)):
+        if event is None or (
+            not event.is_directory and not os.path.islink(event.src_path)
+        ):
             return
 
         mass_storage_backup(event.src_path)
 
 
 class SharedDirectoryWatcher(FileSystemEventHandler):
+    """
+    Watchdog event handler for shared directory changes.
+    """
 
     def __init__(self):
         self._exclude_path = LOG_DIRECTORY + os.sep
         self._exclude = LOG_DIRECTORY
 
-    def on_any_event(self, event):
+    def on_created(self, event):
         """Catch-all event handler.
 
         :param event:
@@ -75,11 +89,35 @@ class SharedDirectoryWatcher(FileSystemEventHandler):
                 if path.startswith(self._exclude_path) or path == self._exclude:
                     return
 
+        schedule_sync(20)
+
+
+def schedule_sync(in_seconds=0):
+    """
+    Schedule a synchronization with Lychee.
+    """
+    with next_lychee_sync_lock:
         global next_lychee_sync
-        next_lychee_sync = datetime.now() + timedelta(seconds=5)
+        next_lychee_sync = datetime.now() + timedelta(seconds=in_seconds)
+        log.info("Scheduling a Lychee synchronization at %s", next_lychee_sync)
+
+
+def _pop_schedule() -> bool:
+    """
+    Pop the next schedule and return it.
+    """
+    with next_lychee_sync_lock:
+        global next_lychee_sync
+        if next_lychee_sync and next_lychee_sync < datetime.now():
+            next_lychee_sync = None
+            return True
+    return False
 
 
 def no_parallel_run(func):
+    """
+    Decorator to prevent a function from running in parallel.
+    """
     lock = threading.Lock()
 
     @wraps(func)
@@ -89,11 +127,18 @@ def no_parallel_run(func):
                 return func(*args, **kwargs)
             finally:
                 lock.release()
+        else:
+            log.info("Skipping %s, already running", func.__name__)
+            return None
 
     return func_wrapper
 
 
 def blink(led_id):
+    """
+    Decorator to blink a button's LED while the function is running.
+    """
+
     def blink_decorator(func):
         @wraps(func)
         def func_wrapper(*args, **kwargs):
@@ -114,10 +159,15 @@ def blink(led_id):
             touchphat.led_off(led_id)
 
         return func_wrapper
+
     return blink_decorator
 
 
 def long_press(button_id, delay, default_state=False):
+    """
+    Decorator to handle long press events on a physical button.
+    """
+
     def long_press_decorator(func):
         start_time = None
 
@@ -141,27 +191,35 @@ def long_press(button_id, delay, default_state=False):
             return func(*args, **kwargs)
 
         return func_wrapper
+
     return long_press_decorator
 
 
 def get_unique_name(source_path):
+    """
+    Get a unique name for the backup directory.
+    It can be either a unique ID stored on the drive or a random ID.
+    It will be used as the name of the backup directory.
+    """
     unique_id = None
 
     try:
         # First try to use the UID stored on the drive
         id_path = os.path.join(source_path, UNIQUE_ID_FILE)
         if os.path.exists(id_path):
-            with open(id_path, 'r') as f:
-                file_unique_id = f.readline()
+            with open(id_path, "r", encoding="utf-8") as file:
+                file_unique_id = file.readline()
                 file_unique_id = werkzeug.utils.secure_filename(file_unique_id)
                 if file_unique_id:
                     return file_unique_id
 
         # Otherwise, generate one and try to store it on the device
-        random_string = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6))
+        random_string = "".join(
+            random.choice(string.ascii_uppercase + string.digits) for _ in range(6)
+        )
         unique_id = werkzeug.utils.secure_filename(random_string)
-        with open(id_path, 'w') as f:
-            f.write(unique_id)
+        with open(id_path, "w", encoding="utf-8") as file:
+            file.write(unique_id)
     except:
         log.warning("Unable to generate a unique ID, using default", exc_info=True)
         unique_id = None
@@ -176,6 +234,9 @@ def get_unique_name(source_path):
 @blink(BUTTON_RSYNC)
 @no_parallel_run
 def mass_storage_backup(source_path):
+    """
+    Backup a mass storage device.
+    """
     if source_path is None:
         return
 
@@ -187,31 +248,53 @@ def mass_storage_backup(source_path):
 
     log.info("Starting backup for %s to %s", source_path, destination_path)
     # File synchronization
-    sh.rsync("-a", "--chmod=Du=rwx,Dgo=rwx,Fu=rw,Fog=rw", source_path + os.sep, destination_path)
+    sh.rsync(
+        "-a",
+        "--chmod=Du=rwx,Dgo=rwx,Fu=rw,Fog=rw",
+        source_path + os.sep,
+        destination_path,
+    )
     # Flush disk buffers
     sh.sync()
+    # Change date
+    sh.touch(destination_path)
     log.info("Finished backup for %s", source_path)
 
     # Schedule a lychee sync for now
-    global next_lychee_sync
-    next_lychee_sync = datetime.now()
+    schedule_sync()
 
 
 @blink(BUTTON_LYCHEE_SYNC)
 @no_parallel_run
 def sync_lychee(complete_sync=False):
+    """
+    Synchronize Lychee with the backup.
+    """
+    if not enable_lychee_sync:
+        log.info("Lychee synchronization is disabled")
+        return
     log.info("Starting Lychee synchronization")
 
     if complete_sync:
         # Delete broken links
         log.info("Removing broken symlinks for Lychee")
         sh.find(LYCHEE_DATA_PATH, "-xtype", "l", "-delete")
-        exclusive_mode = 'replace'
+        exclusive_mode = "replace"
     else:
-        exclusive_mode = 'normal'
+        exclusive_mode = "normal"
 
     try:
-        perform_sync(False, exclusive_mode, True, False, True, False, BACKUP_PATH, LYCHEE_DATA_PATH, LYCHEESYNC_CONF_FILE)
+        perform_sync(
+            False,
+            exclusive_mode,
+            True,
+            False,
+            True,
+            False,
+            BACKUP_PATH,
+            LYCHEE_DATA_PATH,
+            LYCHEESYNC_CONF_FILE,
+        )
     except Exception as e:
         log.exception("Unable to perform Lychee synchronization")
 
@@ -222,22 +305,35 @@ def sync_lychee(complete_sync=False):
 
 @touchphat.on_release(BUTTON_LYCHEE_SYNC)
 def handle_release(event):
+    """
+    Handle the release of the Lychee sync button.
+    """
     sync_lychee(complete_sync=True)
 
 
 @blink(BUTTON_POWER)
 def wait_blink(delay):
+    """
+    Blink the power button for a given delay.
+    """
     time.sleep(delay)
 
 
 @long_press(BUTTON_POWER, 1.5, default_state=True)
 def handle_touch(event):
+    """
+    Handle the touch of the power button.
+    """
+    # Start stopping all the listeners
+    exit_gracefully()
     wait_blink(2.0)
+
+    # Shutdown the system
     with sh.contrib.sudo:
         sh.shutdown("--poweroff", "now")
 
 
-def get_observer_for_cards():
+def _get_observer_for_cards():
     path = OBSERVE_SD_PATH
     event_handler = SDCardWatcher()
 
@@ -247,7 +343,7 @@ def get_observer_for_cards():
     return observer
 
 
-def get_observer_for_share():
+def _get_observer_for_share():
     path = BACKUP_PATH
     event_handler = SharedDirectoryWatcher()
 
@@ -260,6 +356,9 @@ def get_observer_for_share():
 @blink(BUTTON_GPHOTO2_SYNC)
 @no_parallel_run
 def gphoto_backup(device):
+    """
+    Backup a gphoto2 device.
+    """
     if device is None:
         return
 
@@ -273,26 +372,28 @@ def gphoto_backup(device):
     sh.sync()
 
     # Schedule a lychee sync for now
-    global next_lychee_sync
-    next_lychee_sync = datetime.now()
- 
+    schedule_sync()
+
+
+DEVICE_EVENTS_LABELS = {
+    usb1.HOTPLUG_EVENT_DEVICE_ARRIVED: "arrived",
+    usb1.HOTPLUG_EVENT_DEVICE_LEFT: "left",
+}
+
 
 def hotplug_callback(context, device, event):
-    log.info("Device %s: %s" % (
-        {
-            usb1.HOTPLUG_EVENT_DEVICE_ARRIVED: 'arrived',
-            usb1.HOTPLUG_EVENT_DEVICE_LEFT: 'left',
-        }[event],
-        device,
-    ))
+    """
+    Callback for hotplug events.
+    """
+    log.info("Device %s: %s", DEVICE_EVENTS_LABELS[event], device)
     # Note: cannot call synchronous API in this function.
 
     if event == usb1.HOTPLUG_EVENT_DEVICE_ARRIVED:
-        thread = threading.Thread(target = gphoto_backup, args = (device, ))
+        thread = threading.Thread(target=gphoto_backup, args=(device,))
         thread.start()
 
 
-def monitor_usb_devices():
+def _monitor_usb_devices():
     thread = threading.Thread(target=_monitor_usb_devices_thread)
     thread.start()
 
@@ -300,79 +401,117 @@ def monitor_usb_devices():
 def _monitor_usb_devices_thread():
     with usb1.USBContext() as context:
         if not context.hasCapability(usb1.CAP_HAS_HOTPLUG):
-            log.error('Hotplug support is missing. Please update your libusb version.')
+            log.error("Hotplug support is missing. Please update your libusb version.")
             return
-        log.info('Registering hotplug callback...')
-        opaque = context.hotplugRegisterCallback(hotplug_callback)
-        log.info('Callback registered. Monitoring events, ^C to exit')
+        log.info("Registering hotplug callback...")
+        context.hotplugRegisterCallback(hotplug_callback)
+        log.info("Callback registered. Monitoring events, ^C to exit")
         try:
-            while not exiting:
+            while not exiting.is_set():
                 context.handleEvents()
         except (KeyboardInterrupt, SystemExit):
-            log.info('Exiting')
+            log.info("Exiting")
+
+
+def exit_gracefully(signum=None, frame=None):
+    """
+    Exit gracefully.
+    """
+    exiting.set()
 
 
 def main():
-    log.info("Starting PiBackup")
+    """
+    Main function.
+    """
+    args = _parse_arguments()
+    log_level = logging.DEBUG if args.debug else logging.INFO
+    log_dest = None if args.stdout else LOG_DIRECTORY
+    _init_logging(log_dest, log_level)
 
-    global next_lychee_sync
-    observer = get_observer_for_cards()
-    observer_share = get_observer_for_share()
-    monitor_usb_devices()
+    log.info("Starting PiBackup")
+    global enable_lychee_sync
+    enable_lychee_sync = not args.disable_lychee_sync
+
+    observer = _get_observer_for_cards()
+    observer_share = _get_observer_for_share()
+    _monitor_usb_devices()
 
     touchphat.led_on(BUTTON_POWER)
-
-    def exit_gracefully(signum, frame):
-        global exiting
-
-        if exiting:
-            return
-        exiting = True
-        log.info("Stopping PiBackup")
-        observer.stop()
-        observer_share.stop()
-        observer.join(2.0)
-        observer_share.join(2.0)
-        touchphat.all_off()
-        log.info("Stopped PiBackup")
-        exit(-1)
 
     signal.signal(signal.SIGINT, exit_gracefully)
     signal.signal(signal.SIGTERM, exit_gracefully)
 
-    while True:
+    while not exiting.is_set():
         try:
-            time.sleep(1)
-            log
-            if next_lychee_sync and next_lychee_sync < datetime.now():
-                next_lychee_sync = None
+            if _pop_schedule():
                 sync_lychee()
         except (KeyboardInterrupt, SystemExit):
             break
         except:
             log.exception("Unable to synchronize Lychee")
+        finally:
+            time.sleep(1)
 
-    exit_gracefully(None, None)
+    exit_gracefully()
+
+    log.info("Stopping PiBackup")
+    observer.stop()
+    observer_share.stop()
+    observer.join(2.0)
+    observer_share.join(2.0)
+    touchphat.all_off()
+    log.info("Stopped PiBackup")
 
 
-def _init_logging(directory):
+def _parse_arguments():
+    parser = argparse.ArgumentParser(description="PiBackup")
+    parser.add_argument(
+        "-n",
+        "--no-lychee-sync",
+        dest="disable_lychee_sync",
+        action="store_true",
+        default=False,
+        help="Do not synchronize Lychee",
+    )
+    parser.add_argument(
+        "-d", "--debug", action="store_true", default=False, help="Show debug output"
+    )
+    parser.add_argument(
+        "-s",
+        "--stdout",
+        action="store_true",
+        default=False,
+        help="Send log to stdout instead of a file",
+    )
+
+    return parser.parse_args()
+
+
+def _init_logging(directory: Optional[str], level: int = logging.INFO):
+    if not directory:
+        logging.basicConfig(
+            level=level,
+            format="%(asctime)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        return
+
     if not os.path.exists(directory):
         os.makedirs(directory)
 
     log_file = os.path.join(directory, "pibackup.log")
-    handler = logging.handlers.TimedRotatingFileHandler(log_file,
-                                                        when="d",
-                                                        interval=1,
-                                                        backupCount=60)
+    handler = logging.handlers.TimedRotatingFileHandler(
+        log_file, when="d", interval=1, backupCount=60
+    )
 
-    logging.basicConfig(level=logging.INFO,
-                        format='%(asctime)s - %(message)s',
-                        datefmt='%Y-%m-%d %H:%M:%S',
-                        handlers=[handler])
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[handler],
+    )
+
 
 if __name__ == "__main__":
-    try:
-        _init_logging(LOG_DIRECTORY)
-        main()
-    except:
-        log.exception("Unable to start PiBackup")
+    main()

@@ -16,4 +16,4 @@ LC_CTYPE="en_GB.UTF-8"
 
 # Start the application
 cd "$(dirname "$0")"
-python3 ./pibackup/backup.py
+python3 ./pibackup/backup.py --no-lychee-sync

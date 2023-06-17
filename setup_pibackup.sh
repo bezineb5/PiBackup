@@ -6,16 +6,9 @@ SAMBA_USER=pi
 SAMBA_PASSWORD=PiUser
 
 # Error management
-set -o errexit
-set -o pipefail
-set -o nounset
+set -euxo pipefail
 
-# Must be on Debian Jessie
-if [ `lsb_release --release --short` != "8.0" ]; then
-    echo "It currently (2017-11-01) only works with Raspbian Jessie, because of Docker";
-    exit -1;
-fi
-
+# Warn about Raspberry Pi configuration
 echo "Don't forget to use 'sudo raspi-config' to:
  * Enable i2c
  * Expand filesystem"
@@ -28,7 +21,7 @@ sudo apt-get -y upgrade
 # Wifi hotspot
 # Based upon: https://www.raspberrypi.org/documentation/configuration/wireless/access-point.md
 echo "Setting up Wifi hotspot"
-
+curl https://raw.githubusercontent.com/t0b3/rpi-wifi/master/configure | bash -s -- -a MyAP myappass -c WifiSSID wifipass
 sudo apt-get -y install dnsmasq hostapd
 
 sudo systemctl stop dnsmasq
@@ -103,47 +96,57 @@ Guest ok = yes" | sudo tee -a /etc/samba/smb.conf > /dev/null
 ## Create user account
 (echo "$SAMBA_PASSWORD"; echo "$SAMBA_PASSWORD") | sudo smbpasswd -s -a $SAMBA_USER
 
-sudo /etc/init.d/samba restart
+sudo samba restart
 
 # Install docker
 echo "Installing docker"
 curl -sSL https://get.docker.com | sh
 sudo usermod -aG docker pi
 
-echo "Installing docker compose"
-sudo apt-get -y install python
+# echo "Installing docker compose"
+# sudo apt-get -y install python3 python3-pip
 
-wget https://bootstrap.pypa.io/get-pip.py
-sudo python get-pip.py
-sudo python3 get-pip.py
-rm get-pip.py
-
-sudo pip install docker-compose
-docker-compose --version
+# sudo pip3 install docker-compose
+# docker-compose --version
 
 # GPhoto2
 sudo apt-get -y install gphoto2 libgphoto2-dev libusb-1.0-0
 
-# USBMount with support for NTFS and MTP
-sudo apt-get -y install usbmount fuse ntfs-3g jmtpfs
+# Pillow
+sudo apt-get -y install libopenjp2-7
+
+# USBMount with support for exFAT, NTFS and MTP
+sudo apt-get -y install fuse ntfs-3g jmtpfs exfat-fuse exfat-utils
+
+# Note that USBMount is not longer available on Debian Stretch repo, so we have to install it manually
+sudo apt-get install -y debhelper build-essential git lockfile-progs
+git clone https://github.com/rbrito/usbmount.git
+cd ./usbmount
+sudo dpkg-buildpackage -us -uc -b
+cd -
+sudo dpkg -i usbmount_0.0.24_all.deb
+sudo apt-get install -y -f
 
 sudo sed -i "/FS_MOUNTOPTIONS=\"\"/c\FS_MOUNTOPTIONS=\"-fstype=vfat,flush,gid=plugdev,dmask=0007,fmask=0117\"" /etc/usbmount/usbmount.conf
-# FILESYSTEMS="vfat ext2 ext3 ext4 hfsplus jmtpfs ntfs fuseblk"
+# FILESYSTEMS="vfat ext2 ext3 ext4 hfsplus exfat ntfs fuseblk"
 
-echo ".include /usr/lib/systemd/system/systemd-udevd.service
-[Service]
-MountFlags=shared" | sudo tee /etc/systemd/system/systemd-udevd.service > /dev/null
+#echo ".include /usr/lib/systemd/system/systemd-udevd.service
+#[Service]
+#MountFlags=shared" | sudo tee /etc/systemd/system/systemd-udevd.service > /dev/null
 
-sudo service systemd-udevd restart
+#sudo service systemd-udevd restart
 
 # Install application
-sudo apt-get -y install libjpeg-dev zlib1g-dev python3 python3-dev python3-smbus git rsync
+sudo apt-get -y install libjpeg-dev zlib1g-dev python3 python3-dev python3-smbus python3-pip git rsync
+git clone https://github.com/bezineb5/PiBackup.git
+mv ./PiBackup pibackup
+cd ./pibackup
 
 sudo pip3 install -r requirements.txt
 sudo groupadd plugdev
 sudo usermod -aG plugdev pi
 
-docker-compose -f ./lychee/docker-compose.yml pull
-docker-compose -f ./lychee/docker-compose.yml up -d
+docker compose -f ./lychee/docker-compose.yml pull
+docker compose -f ./lychee/docker-compose.yml up -d
 
 crontab -l | { cat; echo "@reboot `pwd`/start.sh"; } | crontab
