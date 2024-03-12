@@ -7,6 +7,7 @@ import signal
 import string
 import threading
 import time
+from logging import handlers
 from datetime import datetime, timedelta
 from functools import wraps
 from typing import Optional
@@ -15,7 +16,6 @@ import sh
 import touchphat
 import usb1
 import werkzeug
-from lycheesync.sync import perform_sync
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
@@ -275,6 +275,8 @@ def sync_lychee(complete_sync=False):
     """
     Synchronize Lychee with the backup.
     """
+    from lycheesync.sync import perform_sync
+
     if not enable_lychee_sync:
         log.info("Lychee synchronization is disabled")
         return
@@ -528,7 +530,7 @@ def _init_logging(directory: Optional[str], level: int = logging.INFO):
         os.makedirs(directory)
 
     log_file = os.path.join(directory, LOG_FILENAME)
-    handler = logging.handlers.TimedRotatingFileHandler(
+    handler = handlers.TimedRotatingFileHandler(
         log_file, when="d", interval=1, backupCount=60
     )
 

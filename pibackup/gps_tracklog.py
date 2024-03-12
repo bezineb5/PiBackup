@@ -13,8 +13,8 @@ def is_device_supported(device: usb1.USBDevice) -> bool:
     """Check if the GPS device is recognized as a supported device."""
     # iGotU GPS devices
     if (
-        device.idVendor == gt2gpx.connections.VENDOR_ID
-        and device.idProduct == gt2gpx.connections.PRODUCT_ID
+        device.getVendorID() == gt2gpx.connections.VENDOR_ID
+        and device.getProductID() == gt2gpx.connections.PRODUCT_ID
     ):
         return True
     return False
@@ -25,6 +25,7 @@ def download_gps_tracks(target_dir: Path) -> None:
     Download GPS tracks from all connected GPS devices
     """
     log.info("Downloading GPS tracks to %s", target_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
 
     _igotu_download_track(_generate_gpx_filename(target_dir, "iGotU"))
 
@@ -42,10 +43,13 @@ def _generate_gpx_filename(target_dir: Path, device_name: str) -> Path:
 
 
 def _igotu_download_track(destination_file: Path) -> None:
-    """Download a GPS track from a iGotU GPS device to a file. The dependency gt2gpx is lazily loaded."""
+    """
+    Download a GPS track from a iGotU GPS device to a file.
+    """
 
     # Connection
     log.info("Downloading iGotU GPS track...")
+    gt2gpx.connections.SLOW_TIMEOUT = 10000
     connection = gt2gpx.connections.get_connection(
         gt2gpx.connections.CONNECTION_TYPE_USB
     )
