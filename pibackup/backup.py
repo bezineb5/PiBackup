@@ -1,6 +1,7 @@
 import argparse
 import logging
 import os
+import pathlib
 import random
 import signal
 import string
@@ -18,13 +19,16 @@ from lycheesync.sync import perform_sync
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
+import gps_tracklog
 import ptp_copy
 
 OBSERVE_SD_PATH = "/var/run/usbmount"
 BACKUP_PATH = "/share"
+GPS_BACKUP_PATH = pathlib.Path(BACKUP_PATH) / "gps"
 LYCHEE_DATA_PATH = "/data/lychee"
 LYCHEESYNC_CONF_FILE = os.path.join(os.getcwd(), "lychee/lycheesync.conf")
 LOG_DIRECTORY = os.path.join(BACKUP_PATH, "logs")
+LOG_FILENAME = "pibackup.log"
 
 UNIQUE_ID_FILE = "unique.id"
 DEFAULT_UNIQUE_ID = "drive"
@@ -32,6 +36,7 @@ DEFAULT_UNIQUE_ID = "drive"
 BUTTON_POWER = "Back"
 BUTTON_RSYNC = "A"
 BUTTON_GPHOTO2_SYNC = "B"
+BUTTON_GPS_SYNC = "C"
 BUTTON_LYCHEE_SYNC = "D"
 
 log = logging.getLogger(__name__)
@@ -172,7 +177,7 @@ def long_press(button_id, delay, default_state=False):
         start_time = None
 
         @touchphat.on_touch(button_id)
-        def handle_touch(event):
+        def handle_touch(_event):
             nonlocal start_time
             start_time = time.time()
 
@@ -304,15 +309,23 @@ def sync_lychee(complete_sync=False):
 
 
 @touchphat.on_release(BUTTON_LYCHEE_SYNC)
-def handle_release(event):
+def handle_lychee_sync_release(_event):
     """
     Handle the release of the Lychee sync button.
     """
     sync_lychee(complete_sync=True)
 
 
+@touchphat.on_release(BUTTON_GPS_SYNC)
+def handle_gps_sync_release(_event):
+    """
+    Handle the release of the GPS track sync button.
+    """
+    gps_backup()
+
+
 @blink(BUTTON_POWER)
-def wait_blink(delay):
+def wait_blink_power(delay):
     """
     Blink the power button for a given delay.
     """
@@ -320,13 +333,13 @@ def wait_blink(delay):
 
 
 @long_press(BUTTON_POWER, 1.5, default_state=True)
-def handle_touch(event):
+def handle_touch_power(_event):
     """
     Handle the touch of the power button.
     """
     # Start stopping all the listeners
     exit_gracefully()
-    wait_blink(2.0)
+    wait_blink_power(2.0)
 
     # Shutdown the system
     with sh.contrib.sudo:
@@ -362,7 +375,7 @@ def gphoto_backup(device):
     if device is None:
         return
 
-    number_of_copies = ptp_copy.rsync_all_cameras(BACKUP_PATH)
+    number_of_copies = ptp_copy.rsync_all_cameras(pathlib.Path(BACKUP_PATH))
 
     # No file copied
     if number_of_copies <= 0:
@@ -375,13 +388,22 @@ def gphoto_backup(device):
     schedule_sync()
 
 
+@blink(BUTTON_GPS_SYNC)
+@no_parallel_run
+def gps_backup():
+    """
+    Backup GPS tracks.
+    """
+    gps_tracklog.download_gps_tracks(GPS_BACKUP_PATH)
+
+
 DEVICE_EVENTS_LABELS = {
     usb1.HOTPLUG_EVENT_DEVICE_ARRIVED: "arrived",
     usb1.HOTPLUG_EVENT_DEVICE_LEFT: "left",
 }
 
 
-def hotplug_callback(context, device, event):
+def hotplug_callback(_context: usb1.USBContext, device: usb1.USBDevice, event):
     """
     Callback for hotplug events.
     """
@@ -389,8 +411,13 @@ def hotplug_callback(context, device, event):
     # Note: cannot call synchronous API in this function.
 
     if event == usb1.HOTPLUG_EVENT_DEVICE_ARRIVED:
-        thread = threading.Thread(target=gphoto_backup, args=(device,))
-        thread.start()
+        if gps_tracklog.is_device_supported(device):
+            log.info("Starting GPS backup")
+            thread = threading.Thread(target=gps_backup)
+            thread.start()
+        else:
+            thread = threading.Thread(target=gphoto_backup, args=(device,))
+            thread.start()
 
 
 def _monitor_usb_devices():
@@ -413,7 +440,7 @@ def _monitor_usb_devices_thread():
             log.info("Exiting")
 
 
-def exit_gracefully(signum=None, frame=None):
+def exit_gracefully(_signum=None, _frame=None):
     """
     Exit gracefully.
     """
@@ -500,7 +527,7 @@ def _init_logging(directory: Optional[str], level: int = logging.INFO):
     if not os.path.exists(directory):
         os.makedirs(directory)
 
-    log_file = os.path.join(directory, "pibackup.log")
+    log_file = os.path.join(directory, LOG_FILENAME)
     handler = logging.handlers.TimedRotatingFileHandler(
         log_file, when="d", interval=1, backupCount=60
     )

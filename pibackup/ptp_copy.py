@@ -7,14 +7,11 @@ import werkzeug
 
 log = logging.getLogger(__name__)
 
-callback_obj = gp.check_result(gp.use_python_logging())
 
-
-def rsync_all_cameras(target_dir):
+def rsync_all_cameras(target_path: pathlib.Path) -> int:
     """
     Backup all cameras to the target directory
     """
-    target_path = pathlib.Path(target_dir)
     cameras = gp.check_result(gp.gp_camera_autodetect())
 
     number_of_copies = 0
@@ -32,7 +29,7 @@ def rsync_all_cameras(target_dir):
     return number_of_copies
 
 
-def _get_camera(address):
+def _get_camera(address) -> gp.Camera:
     camera = gp.Camera()
     # search ports for camera port name
     port_info_list = gp.PortInfoList()
@@ -44,11 +41,11 @@ def _get_camera(address):
     return camera
 
 
-def _get_unique_id(camera_name):
+def _get_unique_id(camera_name: str) -> str:
     return werkzeug.utils.secure_filename(camera_name)
 
 
-def _enumerate_camera_dir(camera, path):
+def _enumerate_camera_dir(camera, path: pathlib.Path):
     # List files in that directory
     for name, _ in camera.folder_list_files(str(path)):
         yield path.joinpath(name)
@@ -60,7 +57,7 @@ def _enumerate_camera_dir(camera, path):
             yield file_path
 
 
-def rsync_camera(camera, target_path):
+def rsync_camera(camera, target_path: pathlib.Path) -> int:
     """
     Backup the specified camera to the target directory
     """
@@ -83,11 +80,3 @@ def rsync_camera(camera, target_path):
             number_of_copies += 1
 
     return number_of_copies
-
-
-def get_camera_file_info(camera, path):
-    """
-    Get the file info for the specified file
-    """
-    folder, name = os.path.split(path)
-    return gp.check_result(gp.gp_camera_file_get_info(camera, folder, name))
