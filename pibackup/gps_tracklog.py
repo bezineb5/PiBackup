@@ -25,11 +25,14 @@ def download_gps_tracks(target_dir: Path) -> None:
     Download GPS tracks from all connected GPS devices
     """
     log.info("Downloading GPS tracks to %s", target_dir)
-    target_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
 
-    _igotu_download_track(_generate_gpx_filename(target_dir, "iGotU"))
+        _igotu_download_track(_generate_gpx_filename(target_dir, "iGotU"))
 
-    log.info("Finished downloading GPS tracks")
+        log.info("Finished downloading GPS tracks")
+    except Exception as e:
+        log.error("Error downloading GPS tracks: %s", e)
 
 
 def _generate_gpx_filename(target_dir: Path, device_name: str) -> Path:
@@ -53,5 +56,6 @@ def _igotu_download_track(destination_file: Path) -> None:
     connection = gt2gpx.connections.get_connection(
         gt2gpx.connections.CONNECTION_TYPE_USB
     )
+    log.info("Connected to iGotU GPS device")
     gt2gpx.download_track(connection, destination_file)
     log.info("Downloaded iGotU GPS track to: %s", destination_file)
