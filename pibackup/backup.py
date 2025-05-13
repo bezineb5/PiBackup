@@ -101,6 +101,9 @@ def schedule_sync(in_seconds=0):
     """
     Schedule a synchronization with Lychee.
     """
+    if not enable_lychee_sync:
+        return
+
     with next_lychee_sync_lock:
         global next_lychee_sync
         next_lychee_sync = datetime.now() + timedelta(seconds=in_seconds)
@@ -275,11 +278,12 @@ def sync_lychee(complete_sync=False):
     """
     Synchronize Lychee with the backup.
     """
-    from lycheesync.sync import perform_sync
-
     if not enable_lychee_sync:
         log.info("Lychee synchronization is disabled")
         return
+
+    from lycheesync.sync import perform_sync
+
     log.info("Starting Lychee synchronization")
 
     if complete_sync:
