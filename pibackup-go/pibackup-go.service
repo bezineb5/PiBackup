@@ -1,0 +1,19 @@
+[Unit]
+Description=PiBackup Go - Simple photo backup service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/pi/pibackup
+ExecStart=/home/pi/pibackup/pibackup
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=PIBACKUP_FEEDBACK=console
+Environment=PIBACKUP_WEBDAV_PORT=80
+Environment=PIBACKUP_WEBDAV_ENABLE=true
+
+[Install]
+WantedBy=multi-user.target 
