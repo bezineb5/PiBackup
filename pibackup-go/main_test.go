@@ -16,19 +16,19 @@ import (
 // Test that the filesystem mock works correctly
 func TestMockFileSystem(t *testing.T) {
 	mockFS := fspkg.NewMockFileSystem()
-	
+
 	// Test MkdirAll
 	err := mockFS.MkdirAll("/test/path", 0755)
 	if err != nil {
 		t.Errorf("MkdirAll failed: %v", err)
 	}
-	
+
 	// Test Join
 	joined := filepath.Join("a", "b", "c")
 	if joined != "a/b/c" {
 		t.Errorf("Join failed: got %s, want a/b/c", joined)
 	}
-	
+
 	// Test Base
 	base := filepath.Base("/path/to/file.txt")
 	if base != "file.txt" {
@@ -41,25 +41,25 @@ func TestDeviceService_Creation(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
-	
+
 	mockFS := fspkg.NewMockFileSystem()
-	
+
 	// Set up mock filesystem for device detection
 	mockFS.ReadDirReturns["/sys/block"] = []fs.DirEntry{
 		fspkg.NewMockDirEntry("sda", true),
 		fspkg.NewMockDirEntry("sdb", true),
 	}
-	
+
 	service := device.NewService(
 		logger,
 		mockFS,
 		nil, // feedback
 		&device.Config{
-			MountPath: "/media",
+			MountPath:  "/media",
 			BackupPath: "/share",
 		},
 	)
-	
+
 	if service == nil {
 		t.Error("Device service creation failed")
 	}
@@ -72,24 +72,24 @@ func TestConfig_Load(t *testing.T) {
 	if err != nil {
 		t.Errorf("Config load failed: %v", err)
 	}
-	
+
 	if cfg == nil {
 		t.Error("Config is nil")
 	}
-	
+
 	// Check default values
 	if cfg.BackupPath != "/share" {
 		t.Errorf("BackupPath: got %s, want /share", cfg.BackupPath)
 	}
-	
+
 	if cfg.USBMountPath != "/media" {
 		t.Errorf("USBMountPath: got %s, want /media", cfg.USBMountPath)
 	}
-	
+
 	if cfg.EnableWebDAV != true {
 		t.Errorf("EnableWebDAV: got %v, want true", cfg.EnableWebDAV)
 	}
-	
+
 	if cfg.WebDAVPort != "80" {
 		t.Errorf("WebDAVPort: got %s, want 80", cfg.WebDAVPort)
 	}
@@ -113,7 +113,7 @@ func TestFileSystem_PathOperations(t *testing.T) {
 			expected: "/media/My Drive",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Test Join
@@ -121,7 +121,7 @@ func TestFileSystem_PathOperations(t *testing.T) {
 			if !strings.HasSuffix(result, tt.input) {
 				t.Errorf("Join failed for %s: got %s", tt.name, result)
 			}
-			
+
 			// Test Base
 			base := filepath.Base(tt.input)
 			if base == "" {
@@ -140,32 +140,32 @@ func TestApp_Structure(t *testing.T) {
 		LogLevel:     slog.LevelDebug,
 		EnableWebDAV: false,
 	}
-	
+
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
-	
+
 	mockFS := fspkg.NewMockFileSystem()
-	
+
 	// Create a test app
 	app := &App{
 		config: cfg,
 		logger: logger,
 		fs:     mockFS,
 	}
-	
+
 	if app == nil {
 		t.Error("App creation failed")
 	}
-	
+
 	if app.config == nil {
 		t.Error("App config is nil")
 	}
-	
+
 	if app.logger == nil {
 		t.Error("App logger is nil")
 	}
-	
+
 	if app.fs == nil {
 		t.Error("App filesystem is nil")
 	}
@@ -174,67 +174,67 @@ func TestApp_Structure(t *testing.T) {
 // Test filesystem operations
 func TestRealFileSystem(t *testing.T) {
 	realFS := fspkg.NewRealFileSystem()
-	
+
 	// Test creating a temporary directory
 	tempDir, err := os.MkdirTemp("", "filesystem-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tempDir)
-	
+
 	// Test MkdirAll
 	testPath := filepath.Join(tempDir, "test", "nested", "path")
 	err = realFS.MkdirAll(testPath, 0755)
 	if err != nil {
 		t.Errorf("MkdirAll failed: %v", err)
 	}
-	
+
 	// Verify directory was created
 	info, err := realFS.Stat(testPath)
 	if err != nil {
 		t.Errorf("Stat failed: %v", err)
 	}
-	
+
 	if !info.IsDir() {
 		t.Error("Created path is not a directory")
 	}
-	
+
 	// Test WriteFile and ReadFile
 	testFile := filepath.Join(tempDir, "test.txt")
 	testData := []byte("Hello, World!")
-	
+
 	err = realFS.WriteFile(testFile, testData, 0644)
 	if err != nil {
 		t.Errorf("WriteFile failed: %v", err)
 	}
-	
+
 	readData, err := realFS.ReadFile(testFile)
 	if err != nil {
 		t.Errorf("ReadFile failed: %v", err)
 	}
-	
+
 	if string(readData) != string(testData) {
 		t.Errorf("ReadFile data mismatch: got %s, want %s", string(readData), string(testData))
 	}
-	
+
 	// Test Join
 	joined := filepath.Join("a", "b", "c")
 	if joined != "a/b/c" {
 		t.Errorf("Join failed: got %s, want a/b/c", joined)
 	}
-	
+
 	// Test Base
 	base := filepath.Base("/path/to/file.txt")
 	if base != "file.txt" {
 		t.Errorf("Base failed: got %s, want file.txt", base)
 	}
-	
+
 	// Test ReadDir
 	entries, err := realFS.ReadDir(tempDir)
 	if err != nil {
 		t.Errorf("ReadDir failed: %v", err)
 	}
-	
+
 	if len(entries) < 1 {
 		t.Error("ReadDir returned no entries")
 	}

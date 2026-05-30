@@ -14,13 +14,13 @@ import (
 type MockFeedback struct{}
 
 func (m *MockFeedback) Notify(event feedback.Event) {}
-func (m *MockFeedback) Halt() error { return nil }
+func (m *MockFeedback) Halt() error                 { return nil }
 
 func TestNewService(t *testing.T) {
 	logger := slog.Default()
 	mockFS := &fs.MockFileSystem{}
 	mockFeedback := &MockFeedback{}
-	
+
 	config := &Config{
 		BackupPath: "/tmp/backups",
 	}
@@ -50,7 +50,7 @@ func TestGetBackupNameWithUniqueID(t *testing.T) {
 	logger := slog.Default()
 	realFS := fs.RealFileSystem{}
 	mockFeedback := &MockFeedback{}
-	
+
 	config := &Config{
 		BackupPath: "/tmp/backups",
 	}
@@ -74,7 +74,7 @@ func TestGetBackupNameWithoutUniqueID(t *testing.T) {
 	logger := slog.Default()
 	realFS := fs.RealFileSystem{}
 	mockFeedback := &MockFeedback{}
-	
+
 	config := &Config{
 		BackupPath: "/tmp/backups",
 	}
@@ -99,7 +99,7 @@ func TestPerformPostBackupTasks(t *testing.T) {
 	logger := slog.Default()
 	mockFS := &fs.MockFileSystem{}
 	mockFeedback := &MockFeedback{}
-	
+
 	config := &Config{
 		BackupPath: tmpDir,
 	}

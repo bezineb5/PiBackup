@@ -11,7 +11,7 @@ import (
 func TestLoadConfig(t *testing.T) {
 	// Reset Viper before test
 	viper.Reset()
-	
+
 	// Create a temporary config file
 	tmpDir, err := os.MkdirTemp("", "config_test")
 	if err != nil {
@@ -58,7 +58,7 @@ logging:
 func TestLoadConfigWithDefaults(t *testing.T) {
 	// Reset Viper before test
 	viper.Reset()
-	
+
 	// Load config with empty string (will search default paths and use defaults)
 	cfg, err := Load("")
 	if err != nil {
@@ -84,7 +84,7 @@ func TestLoadConfigWithDefaults(t *testing.T) {
 func TestLoadConfigInvalidYAML(t *testing.T) {
 	// Reset Viper before test
 	viper.Reset()
-	
+
 	// Create a temporary config file with invalid YAML
 	tmpDir, err := os.MkdirTemp("", "config_invalid_test")
 	if err != nil {

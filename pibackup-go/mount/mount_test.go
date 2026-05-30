@@ -13,7 +13,7 @@ import (
 func TestNewService(t *testing.T) {
 	logger := slog.Default()
 	mockFS := &fs.MockFileSystem{}
-	
+
 	service := NewService(logger, mockFS)
 	if service == nil {
 		t.Fatal("NewService returned nil")
@@ -22,7 +22,7 @@ func TestNewService(t *testing.T) {
 
 func TestIsMounted(t *testing.T) {
 	logger := slog.Default()
-	
+
 	// Create a real filesystem
 	realFS := fs.RealFileSystem{}
 	service := NewService(logger, realFS)
@@ -37,7 +37,7 @@ func TestIsMounted(t *testing.T) {
 
 func TestGetMountPoint(t *testing.T) {
 	logger := slog.Default()
-	
+
 	// Create a real filesystem
 	realFS := fs.RealFileSystem{}
 	service := NewService(logger, realFS)
@@ -51,7 +51,7 @@ func TestGetMountPoint(t *testing.T) {
 
 func TestIsMountPointInUse(t *testing.T) {
 	logger := slog.Default()
-	
+
 	// Create a real filesystem
 	realFS := fs.RealFileSystem{}
 	service := NewService(logger, realFS)
@@ -87,7 +87,7 @@ func TestMountAndUnmount(t *testing.T) {
 	ctx := context.Background()
 	device := "/dev/sda1"
 	err = service.Mount(ctx, device, mountPoint)
-	
+
 	// We expect an error because:
 	// 1. We're not running as root
 	// 2. The device doesn't exist

@@ -30,7 +30,7 @@ func TestEventTypeString(t *testing.T) {
 func TestEventStruct(t *testing.T) {
 	now := time.Now()
 	testErr := errors.New("test error")
-	
+
 	event := Event{
 		Type:      EventStatus,
 		Message:   "Test message",
@@ -62,17 +62,17 @@ func TestEventStruct(t *testing.T) {
 
 func TestConsoleFeedback(t *testing.T) {
 	feedback := &ConsoleFeedback{}
-	
+
 	// Test Notify doesn't panic
 	event := Event{
 		Type:      EventStatus,
 		Message:   "Test",
 		Timestamp: time.Now(),
 	}
-	
+
 	// This will print to stdout, but shouldn't panic
 	feedback.Notify(event)
-	
+
 	// Test Halt doesn't panic
 	err := feedback.Halt()
 	if err != nil {
@@ -82,20 +82,20 @@ func TestConsoleFeedback(t *testing.T) {
 
 func TestLogFeedback(t *testing.T) {
 	feedback := NewLogFeedback()
-	
+
 	if feedback == nil {
 		t.Fatal("NewLogFeedback returned nil")
 	}
-	
+
 	// Test Notify doesn't panic
 	event := Event{
 		Type:      EventStatus,
 		Message:   "Test",
 		Timestamp: time.Now(),
 	}
-	
+
 	feedback.Notify(event)
-	
+
 	// Test Halt doesn't panic
 	err := feedback.Halt()
 	if err != nil {

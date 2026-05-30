@@ -76,7 +76,7 @@ func getParentDeviceName(deviceName string) string {
 		}
 		return deviceName[:2]
 	}
-	
+
 	// For mmcblk* devices: mmcblk0p1 -> mmcblk0
 	if strings.HasPrefix(deviceName, "mmcblk") {
 		// Find the 'p' and remove everything after it
@@ -85,6 +85,6 @@ func getParentDeviceName(deviceName string) string {
 		}
 		return deviceName
 	}
-	
+
 	return ""
 }

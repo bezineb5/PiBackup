@@ -22,7 +22,7 @@ type FileSystem interface {
 
 	// Additional read operation not in io/fs
 	Readlink(name string) (string, error)
-	
+
 	// Explicitly declare ReadDir for clarity (it's in fs.FS but we want to be explicit)
 	ReadDir(name string) ([]fs.DirEntry, error)
 }

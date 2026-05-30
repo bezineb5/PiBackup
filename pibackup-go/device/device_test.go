@@ -12,7 +12,7 @@ func TestNewService(t *testing.T) {
 	logger := slog.Default()
 	mockFS := &fs.MockFileSystem{}
 	config := &Config{
-		MountPath: "/media",
+		MountPath:  "/media",
 		BackupPath: "/backups",
 	}
 
@@ -51,11 +51,11 @@ func TestGetParentDeviceName(t *testing.T) {
 func TestProcessDevice(t *testing.T) {
 	// Create a mock filesystem
 	mockFS := &fs.MockFileSystem{}
-	
+
 	// Create service
 	logger := slog.Default()
 	config := &Config{
-		MountPath: "/tmp/mount",
+		MountPath:  "/tmp/mount",
 		BackupPath: "/tmp/backups",
 	}
 	service := NewService(logger, mockFS, nil, config)
@@ -63,7 +63,7 @@ func TestProcessDevice(t *testing.T) {
 	// Test processing a device with context
 	ctx := context.Background()
 	devicePath := "/dev/sda1"
-	
+
 	// This will test the flow without actually mounting
 	// With MockFileSystem, it won't do much but shouldn't panic
 	err := service.ProcessDevice(ctx, devicePath)
@@ -74,11 +74,11 @@ func TestProcessDevice(t *testing.T) {
 func TestProcessExistingDevices(t *testing.T) {
 	// Create a mock filesystem
 	mockFS := &fs.MockFileSystem{}
-	
+
 	// Create service
 	logger := slog.Default()
 	config := &Config{
-		MountPath: "/tmp/mount",
+		MountPath:  "/tmp/mount",
 		BackupPath: "/tmp/backups",
 	}
 	service := NewService(logger, mockFS, nil, config)
@@ -86,6 +86,6 @@ func TestProcessExistingDevices(t *testing.T) {
 	// Test processing existing devices
 	ctx := context.Background()
 	service.ProcessExistingDevices(ctx)
-	
+
 	// Verify no panic occurred
 }

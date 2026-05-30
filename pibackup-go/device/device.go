@@ -19,17 +19,17 @@ import (
 
 // Service handles device detection and processing
 type Service struct {
-	logger    *slog.Logger
-	fs        fs.FileSystem
-	feedback  feedback.Feedback
-	checkers  []Checker
-	mountPath string
+	logger     *slog.Logger
+	fs         fs.FileSystem
+	feedback   feedback.Feedback
+	checkers   []Checker
+	mountPath  string
 	backupPath string
 }
 
 // Config holds configuration for the device service
 type Config struct {
-	MountPath string
+	MountPath  string
 	BackupPath string
 }
 
@@ -41,11 +41,11 @@ func NewService(
 	config *Config,
 ) *Service {
 	return &Service{
-		logger:    logger,
-		fs:        fs,
-		feedback:  feedback,
-		checkers:  Checkers(logger, fs),
-		mountPath: config.MountPath,
+		logger:     logger,
+		fs:         fs,
+		feedback:   feedback,
+		checkers:   Checkers(logger, fs),
+		mountPath:  config.MountPath,
 		backupPath: config.BackupPath,
 	}
 }
@@ -88,10 +88,10 @@ func (s *Service) FindUSBDevices() []string {
 
 		if s.IsUSBStorage(deviceName) {
 			s.logger.Info("found USB device", "device", deviceName)
-			
+
 			// Add the whole device
 			devices = append(devices, deviceName)
-			
+
 			// Also add its partitions (e.g., sda1, sda2 for device sda)
 			partitions := s.findPartitions(deviceName)
 			for _, partition := range partitions {
@@ -108,7 +108,7 @@ func (s *Service) FindUSBDevices() []string {
 // findPartitions returns a list of partition names for a device
 func (s *Service) findPartitions(deviceName string) []string {
 	var partitions []string
-	
+
 	// Check /sys/block/<deviceName> for partition subdirectories
 	blockPath := filepath.Join("/sys/block", deviceName)
 	entries, err := s.fs.ReadDir(blockPath)
@@ -327,7 +327,7 @@ func (s *Service) handleNewMount(device, deviceName string) MountInfo {
 		actualDevice = filepath.Join("/dev", partition)
 		s.logger.Info("mounting partition instead of whole disk", "partition", partition, "device", deviceName)
 	}
-	
+
 	// Use the actual device name (partition or whole disk) for mount point
 	actualDeviceName := filepath.Base(actualDevice)
 	mountPoint := filepath.Join(s.mountPath, actualDeviceName)
@@ -471,7 +471,7 @@ func (s *Service) performBackup(ctx context.Context, mountPoint, device, deviceN
 // runRsyncBackup executes the rsync command to perform the actual backup
 func (s *Service) runRsyncBackup(ctx context.Context, source, destination, device, deviceName string) error {
 	rsyncArgs := []string{
-		"-a",                                          // Archive mode
+		"-a",                                  // Archive mode
 		"--chmod=Du=rwx,Dgo=rwx,Fu=rw,Fog=rw", // Preserve permissions
 	}
 
@@ -751,7 +751,7 @@ func isDigitString(s string) bool {
 // For partitions (sda1), checks /sys/block/sda/sda1/size
 func (s *Service) hasMedium(devicePath string) bool {
 	deviceName := filepath.Base(devicePath)
-	
+
 	// Try direct path first (works for whole devices like sda)
 	sizePath := filepath.Join("/sys/block", deviceName, "size")
 	data, err := s.fs.ReadFile(sizePath)
@@ -764,7 +764,7 @@ func (s *Service) hasMedium(devicePath string) bool {
 		}
 		return size > 0
 	}
-	
+
 	// For partitions (sda1), the size is in /sys/block/sda/sda1/size
 	// Try to find the parent device by removing the trailing digit
 	if len(deviceName) > 0 && unicode.IsDigit(rune(deviceName[len(deviceName)-1])) {
@@ -781,7 +781,7 @@ func (s *Service) hasMedium(devicePath string) bool {
 			return size > 0
 		}
 	}
-	
+
 	// Could not determine size
 	s.logger.Debug("could not read device size", "device", devicePath)
 	return false
@@ -792,7 +792,7 @@ func (s *Service) hasMedium(devicePath string) bool {
 // Otherwise returns the device itself (for devices without partition tables)
 func (s *Service) getMountableDevicePath(device string) string {
 	deviceName := filepath.Base(device)
-	
+
 	// Check if device has partitions by looking for partition subdirectories
 	// Partitions appear as subdirectories in /sys/block/<device> (e.g., /sys/block/sda/sda1)
 	blockPath := filepath.Join("/sys/block", deviceName)

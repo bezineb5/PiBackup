@@ -33,7 +33,7 @@ type Monitor struct {
 func NewMonitor(logger *slog.Logger) (*Monitor, error) {
 	// Create netlink connection
 	conn := &netlink.UEventConn{}
-	
+
 	// Connect to udev-processed events (Mode 2 = UdevEvent) for richer information
 	// Use KernelEvent (Mode 1) for raw kernel events
 	if err := conn.Connect(netlink.UdevEvent); err != nil {
@@ -46,10 +46,10 @@ func NewMonitor(logger *slog.Logger) (*Monitor, error) {
 		Events:   make(chan Event, 100),
 		stopChan: make(chan struct{}),
 	}
-	
+
 	// Start monitoring in a goroutine
 	go m.run()
-	
+
 	return m, nil
 }
 
@@ -58,11 +58,11 @@ func (m *Monitor) run() {
 	// Create channels for uevents and errors
 	ueventChan := make(chan netlink.UEvent, 100)
 	errChan := make(chan error, 10)
-	
+
 	// Start monitoring
 	quit := m.conn.Monitor(ueventChan, errChan, nil)
 	defer close(quit)
-	
+
 	for {
 		select {
 		case <-m.stopChan:
@@ -74,18 +74,18 @@ func (m *Monitor) run() {
 			if uevent.Env["SUBSYSTEM"] != "block" {
 				continue
 			}
-			
+
 			// Extract device name from DEVPATH
 			// DEVPATH is like: /devices/pci0000:00/.../block/sda/sda1
 			deviceName := extractDeviceName(uevent.Env["DEVPATH"])
-			
+
 			m.logger.Debug("uevent received",
 				"action", uevent.Action,
 				"subsystem", uevent.Env["SUBSYSTEM"],
 				"device", deviceName,
 				"devpath", uevent.Env["DEVPATH"],
 			)
-			
+
 			// Send the event
 			m.Events <- Event{
 				Action:  string(uevent.Action),

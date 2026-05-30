@@ -12,23 +12,30 @@ type MockFileSystem struct {
 	mu sync.Mutex
 
 	// Call tracking
-	OpenCalls      []string
-	StatCalls      []string
-	ReadFileCalls  []string
-	ReadDirCalls   []string
-	MkdirAllCalls  []struct{ path string; perm os.FileMode }
-	WriteFileCalls []struct{ name string; data []byte; perm os.FileMode }
+	OpenCalls     []string
+	StatCalls     []string
+	ReadFileCalls []string
+	ReadDirCalls  []string
+	MkdirAllCalls []struct {
+		path string
+		perm os.FileMode
+	}
+	WriteFileCalls []struct {
+		name string
+		data []byte
+		perm os.FileMode
+	}
 	RemoveCalls    []string
 	RemoveAllCalls []string
 	ReadlinkCalls  []string
 
 	// Return value configuration
-	OpenReturns   map[string]fs.File
-	OpenErrors   map[string]error
-	StatReturns  map[string]fs.FileInfo
-	StatErrors   map[string]error
+	OpenReturns     map[string]fs.File
+	OpenErrors      map[string]error
+	StatReturns     map[string]fs.FileInfo
+	StatErrors      map[string]error
 	ReadFileReturns map[string][]byte
-	ReadFileErrors map[string]error
+	ReadFileErrors  map[string]error
 	ReadDirReturns  map[string][]fs.DirEntry
 	ReadDirErrors   map[string]error
 	MkdirAllErrors  map[string]error
@@ -92,7 +99,10 @@ func (m *MockFileSystem) MkdirAll(path string, perm os.FileMode) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.MkdirAllCalls = append(m.MkdirAllCalls, struct{ path string; perm os.FileMode }{path, perm})
+	m.MkdirAllCalls = append(m.MkdirAllCalls, struct {
+		path string
+		perm os.FileMode
+	}{path, perm})
 	return m.MkdirAllErrors[path]
 }
 
@@ -101,7 +111,11 @@ func (m *MockFileSystem) WriteFile(name string, data []byte, perm os.FileMode) e
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.WriteFileCalls = append(m.WriteFileCalls, struct{ name string; data []byte; perm os.FileMode }{name, data, perm})
+	m.WriteFileCalls = append(m.WriteFileCalls, struct {
+		name string
+		data []byte
+		perm os.FileMode
+	}{name, data, perm})
 	return m.WriteFileErrors[name]
 }
 
@@ -138,12 +152,12 @@ func (m *MockFileSystem) Readlink(name string) (string, error) {
 // NewMockFileSystem creates a new MockFileSystem
 func NewMockFileSystem() *MockFileSystem {
 	return &MockFileSystem{
-		OpenReturns:    make(map[string]fs.File),
-		OpenErrors:    make(map[string]error),
-		StatReturns:   make(map[string]fs.FileInfo),
-		StatErrors:    make(map[string]error),
+		OpenReturns:     make(map[string]fs.File),
+		OpenErrors:      make(map[string]error),
+		StatReturns:     make(map[string]fs.FileInfo),
+		StatErrors:      make(map[string]error),
 		ReadFileReturns: make(map[string][]byte),
-		ReadFileErrors: make(map[string]error),
+		ReadFileErrors:  make(map[string]error),
 		ReadDirReturns:  make(map[string][]fs.DirEntry),
 		ReadDirErrors:   make(map[string]error),
 		MkdirAllErrors:  make(map[string]error),
@@ -192,10 +206,10 @@ type mockFileInfo struct {
 
 func (m *mockFileInfo) Name() string       { return m.name }
 func (m *mockFileInfo) Size() int64        { return m.size }
-func (m *mockFileInfo) Mode() fs.FileMode   { return 0644 }
-func (m *mockFileInfo) ModTime() time.Time  { return time.Now() }
-func (m *mockFileInfo) IsDir() bool         { return false }
-func (m *mockFileInfo) Sys() interface{}    { return nil }
+func (m *mockFileInfo) Mode() fs.FileMode  { return 0644 }
+func (m *mockFileInfo) ModTime() time.Time { return time.Now() }
+func (m *mockFileInfo) IsDir() bool        { return false }
+func (m *mockFileInfo) Sys() interface{}   { return nil }
 
 // NewMockFileInfo creates a mock FileInfo
 func NewMockFileInfo(name string, size int64, isDir bool) fs.FileInfo {
@@ -212,10 +226,10 @@ type mockDirInfo struct {
 
 func (m *mockDirInfo) Name() string       { return m.name }
 func (m *mockDirInfo) Size() int64        { return 0 }
-func (m *mockDirInfo) Mode() fs.FileMode   { return fs.ModeDir | 0755 }
-func (m *mockDirInfo) ModTime() time.Time  { return time.Now() }
-func (m *mockDirInfo) IsDir() bool         { return true }
-func (m *mockDirInfo) Sys() interface{}    { return nil }
+func (m *mockDirInfo) Mode() fs.FileMode  { return fs.ModeDir | 0755 }
+func (m *mockDirInfo) ModTime() time.Time { return time.Now() }
+func (m *mockDirInfo) IsDir() bool        { return true }
+func (m *mockDirInfo) Sys() interface{}   { return nil }
 
 // NewMockDirEntry creates a mock DirEntry
 func NewMockDirEntry(name string, isDir bool) fs.DirEntry {
@@ -231,8 +245,8 @@ type mockDirEntry struct {
 	info fs.FileInfo
 }
 
-func (m *mockDirEntry) Name() string       { return m.name }
-func (m *mockDirEntry) IsDir() bool         { return m.info.IsDir() }
-func (m *mockDirEntry) Type() fs.FileMode   { return m.info.Mode() }
+func (m *mockDirEntry) Name() string               { return m.name }
+func (m *mockDirEntry) IsDir() bool                { return m.info.IsDir() }
+func (m *mockDirEntry) Type() fs.FileMode          { return m.info.Mode() }
 func (m *mockDirEntry) Info() (fs.FileInfo, error) { return m.info, nil }
-func (m *mockDirEntry) Sys() interface{}    { return nil }
+func (m *mockDirEntry) Sys() interface{}           { return nil }
