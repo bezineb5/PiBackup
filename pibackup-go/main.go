@@ -12,6 +12,7 @@ import (
 	"github.com/benjamin/pibackup/pibackup-go/device"
 	"github.com/benjamin/pibackup/pibackup-go/fs"
 	"github.com/benjamin/pibackup/pibackup-go/mount"
+	"github.com/benjamin/pibackup/pibackup-go/uevent"
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -84,12 +85,22 @@ func runApp(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to setup logging: %w", err)
 	}
 
-	// Create watcher
+	// Create watcher (fallback if uevent fails)
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return fmt.Errorf("failed to create watcher: %w", err)
 	}
 	defer watcher.Close()
+
+	// Create uevent monitor (primary device detection)
+	var ueventMonitor *uevent.Monitor
+	ueventMonitor, err = uevent.NewMonitor(logger)
+	if err != nil {
+		logger.Warn("failed to create uevent monitor, will use fsnotify fallback", "error", err)
+		ueventMonitor = nil
+	} else {
+		logger.Info("uevent monitor started")
+	}
 
 	// Create services with dependency injection
 	deviceService := device.NewService(
@@ -97,7 +108,7 @@ func runApp(cmd *cobra.Command, args []string) error {
 		realFS,
 		cfg.Feedback,
 		&device.Config{
-			MountPath: cfg.USBMountPath,
+			MountPath:  cfg.USBMountPath,
 			BackupPath: cfg.BackupPath,
 		},
 	)
@@ -118,6 +129,7 @@ func runApp(cmd *cobra.Command, args []string) error {
 		cfg,
 		logger,
 		watcher,
+		ueventMonitor,
 		deviceService,
 		mountService,
 		backupService,

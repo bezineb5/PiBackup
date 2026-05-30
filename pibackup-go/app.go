@@ -18,6 +18,7 @@ import (
 	"github.com/benjamin/pibackup/pibackup-go/feedback"
 	"github.com/benjamin/pibackup/pibackup-go/fs"
 	"github.com/benjamin/pibackup/pibackup-go/mount"
+	"github.com/benjamin/pibackup/pibackup-go/uevent"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -32,6 +33,7 @@ type App struct {
 
 	// Injected dependencies
 	watcher       *fsnotify.Watcher
+	ueventMonitor *uevent.Monitor
 	deviceService *device.Service
 	mountService  *mount.Service
 	backupService *backup.Service
@@ -43,6 +45,7 @@ func NewApp(
 	config *config.Config,
 	logger *slog.Logger,
 	watcher *fsnotify.Watcher,
+	ueventMonitor *uevent.Monitor,
 	deviceService *device.Service,
 	mountService *mount.Service,
 	backupService *backup.Service,
@@ -55,6 +58,7 @@ func NewApp(
 		ctx:           ctx,
 		cancel:        cancel,
 		watcher:       watcher,
+		ueventMonitor: ueventMonitor,
 		deviceService: deviceService,
 		mountService:  mountService,
 		backupService: backupService,
@@ -106,12 +110,17 @@ func (app *App) Run() error {
 		}
 	}
 
-	// Watch /sys/block for device changes
-	if err := app.watcher.Add("/sys/block"); err != nil {
-		return fmt.Errorf("failed to watch /sys/block: %w", err)
+	// Start uevent monitor for kernel-level device events (primary)
+	// This uses netlink sockets - no CGO required
+	if app.ueventMonitor != nil {
+		app.logger.Info("uevent monitor already started")
+	} else {
+		// Fallback: watch /dev for new block devices
+		if err := app.watcher.Add("/dev"); err != nil {
+			return fmt.Errorf("failed to watch /dev: %w", err)
+		}
+		app.logger.Info("watcher started (fallback mode)", "path", "/dev")
 	}
-
-	app.logger.Info("watcher started", "path", "/sys/block")
 
 	// Process existing devices first
 	app.deviceService.ProcessExistingDevices(app.ctx)
@@ -129,6 +138,22 @@ func (app *App) Run() error {
 	// Watch for new devices
 	for {
 		select {
+		case uevent := <-app.ueventMonitor.Events:
+			// Handle kernel uevent (primary)
+			switch uevent.Action {
+			case "add":
+				devicePath := filepath.Join("/dev", uevent.Device)
+				app.logger.Info("uevent: device added", "device", devicePath)
+				go app.processDevice(devicePath)
+			case "remove":
+				app.logger.Info("uevent: device removed", "device", uevent.Device)
+				// Handle device removal if needed
+			case "change":
+				app.logger.Debug("uevent: device changed", "device", uevent.Device)
+				// Handle device change if needed
+			default:
+				app.logger.Debug("uevent: unknown action", "action", uevent.Action, "device", uevent.Device)
+			}
 		case event := <-app.watcher.Events:
 			if event.Op&fsnotify.Create == fsnotify.Create {
 				app.handleDeviceEvent(event)
