@@ -67,6 +67,9 @@ func NewCAP1166Feedback() (*CAP1166Feedback, error) {
 	opts.I2CAddr = 0x2C
 	opts.AlertPin = alertPin
 	opts.ResetPin = resetPin
+	// Disable LinkedLEDs so we can manually control all LEDs
+	// This is needed because we use LEDs 4 (Error) and 5 (Power) as standalone indicators
+	opts.LinkedLEDs = false
 
 	// Create CAP1166 device
 	dev, err := cap1xxx.NewI2C(i2cBus, &opts)

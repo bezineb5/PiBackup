@@ -5,6 +5,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/benjamin/pibackup/pibackup-go/config"
+	"github.com/benjamin/pibackup/pibackup-go/fs"
 )
 
 // testApp creates a minimal App instance for testing
@@ -16,14 +19,19 @@ func testApp(t *testing.T) *App {
 		Level: slog.LevelDebug,
 	}))
 
+	// Create a mock filesystem
+	mockFS := &fs.MockFileSystem{}
+
 	return &App{
 		logger: logger,
+		fs:     mockFS,
+		config: testConfig(),
 	}
 }
 
 // testConfig creates a minimal Config instance for testing
-func testConfig() *Config {
-	return &Config{
+func testConfig() *config.Config {
+	return &config.Config{
 		BackupPath:   "/tmp/test-backup",
 		USBMountPath: "/tmp/test-mount",
 		LogPath:      "/tmp/test.log",

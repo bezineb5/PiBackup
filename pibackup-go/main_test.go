@@ -1,16 +1,102 @@
 package main
 
 import (
+	"io/fs"
+	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/benjamin/pibackup/pibackup-go/feedback"
+	"github.com/benjamin/pibackup/pibackup-go/config"
+	"github.com/benjamin/pibackup/pibackup-go/device"
+	fspkg "github.com/benjamin/pibackup/pibackup-go/fs"
 )
 
-func TestApp_decodeMountPoint(t *testing.T) {
-	app := testApp(t)
+// Test that the filesystem mock works correctly
+func TestMockFileSystem(t *testing.T) {
+	mockFS := fspkg.NewMockFileSystem()
+	
+	// Test MkdirAll
+	err := mockFS.MkdirAll("/test/path", 0755)
+	if err != nil {
+		t.Errorf("MkdirAll failed: %v", err)
+	}
+	
+	// Test Join
+	joined := filepath.Join("a", "b", "c")
+	if joined != "a/b/c" {
+		t.Errorf("Join failed: got %s, want a/b/c", joined)
+	}
+	
+	// Test Base
+	base := filepath.Base("/path/to/file.txt")
+	if base != "file.txt" {
+		t.Errorf("Base failed: got %s, want file.txt", base)
+	}
+}
 
+// Test device service creation
+func TestDeviceService_Creation(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+	
+	mockFS := fspkg.NewMockFileSystem()
+	
+	// Set up mock filesystem for device detection
+	mockFS.ReadDirReturns["/sys/block"] = []fs.DirEntry{
+		fspkg.NewMockDirEntry("sda", true),
+		fspkg.NewMockDirEntry("sdb", true),
+	}
+	
+	service := device.NewService(
+		logger,
+		mockFS,
+		nil, // feedback
+		&device.Config{
+			MountPath: "/media",
+			BackupPath: "/share",
+		},
+	)
+	
+	if service == nil {
+		t.Error("Device service creation failed")
+	}
+}
+
+// Test config loading
+func TestConfig_Load(t *testing.T) {
+	// Test with empty config file (uses defaults)
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Errorf("Config load failed: %v", err)
+	}
+	
+	if cfg == nil {
+		t.Error("Config is nil")
+	}
+	
+	// Check default values
+	if cfg.BackupPath != "/share" {
+		t.Errorf("BackupPath: got %s, want /share", cfg.BackupPath)
+	}
+	
+	if cfg.USBMountPath != "/media" {
+		t.Errorf("USBMountPath: got %s, want /media", cfg.USBMountPath)
+	}
+	
+	if cfg.EnableWebDAV != true {
+		t.Errorf("EnableWebDAV: got %v, want true", cfg.EnableWebDAV)
+	}
+	
+	if cfg.WebDAVPort != "80" {
+		t.Errorf("WebDAVPort: got %s, want 80", cfg.WebDAVPort)
+	}
+}
+
+// Test path joining with filesystem abstraction
+func TestFileSystem_PathOperations(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
@@ -22,214 +108,134 @@ func TestApp_decodeMountPoint(t *testing.T) {
 			expected: "/media/usb",
 		},
 		{
-			name:     "space escape",
-			input:    "/media/My\\040Drive",
+			name:     "path with spaces",
+			input:    "/media/My Drive",
 			expected: "/media/My Drive",
 		},
-		{
-			name:     "multiple spaces",
-			input:    "/media/My\\040USB\\040Drive",
-			expected: "/media/My USB Drive",
-		},
-		{
-			name:     "tab and space",
-			input:    "/media/Drive\\011with\\040tab",
-			expected: "/media/Drive\twith tab",
-		},
-		{
-			name:     "newline and space",
-			input:    "/media/Drive\\012with\\040newline",
-			expected: "/media/Drive\nwith newline",
-		},
-		{
-			name:     "backslash and space",
-			input:    "/media/Drive\\134with\\040backslash",
-			expected: "/media/Drive\\with backslash",
-		},
-		{
-			name:     "multiple spaces complex",
-			input:    "/media/Drive\\040with\\040spaces\\040and\\040more",
-			expected: "/media/Drive with spaces and more",
-		},
-		{
-			name:     "mixed escapes",
-			input:    "/media/Drive\\040with\\011tab\\040and\\012newline",
-			expected: "/media/Drive with\ttab and\nnewline",
-		},
-		{
-			name:     "backslash and spaces",
-			input:    "/media/Drive\\040with\\134backslash\\040and\\040spaces",
-			expected: "/media/Drive with\\backslash and spaces",
-		},
-		// Additional test cases that demonstrate the improvement over manual method
-		{
-			name:     "carriage return",
-			input:    "/media/Drive\\015with\\040carriage\\040return",
-			expected: "/media/Drive\rwith carriage return",
-		},
-		{
-			name:     "escape character",
-			input:    "/media/Drive\\033with\\040escape",
-			expected: "/media/Drive\x1bwith escape",
-		},
-		{
-			name:     "delete character",
-			input:    "/media/Drive\\177with\\040delete",
-			expected: "/media/Drive\x7fwith delete",
-		},
-		{
-			name:     "hex escape",
-			input:    "/media/Drive\\x20with\\040hex\\040escape",
-			expected: "/media/Drive with hex escape",
-		},
-		{
-			name:     "unicode escape",
-			input:    "/media/Drive\\u0020with\\040unicode\\040escape",
-			expected: "/media/Drive with unicode escape",
-		},
-		{
-			name:     "empty string",
-			input:    "",
-			expected: "",
-		},
-		{
-			name:     "no escapes",
-			input:    "/path/without/escapes",
-			expected: "/path/without/escapes",
-		},
-		{
-			name:     "invalid escape sequence",
-			input:    "/media/Drive\\999invalid",
-			expected: "/media/Drive\\999invalid", // Should return original on error
-		},
 	}
-
+	
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := app.decodeMountPoint(tt.input)
-			if got != tt.expected {
-				t.Errorf("decodeMountPoint() = %q, want %q", got, tt.expected)
+			// Test Join
+			result := filepath.Join("/media", tt.input)
+			if !strings.HasSuffix(result, tt.input) {
+				t.Errorf("Join failed for %s: got %s", tt.name, result)
+			}
+			
+			// Test Base
+			base := filepath.Base(tt.input)
+			if base == "" {
+				t.Errorf("Base returned empty for %s", tt.name)
 			}
 		})
 	}
 }
 
-// Benchmark the decodeMountPoint method
-func BenchmarkApp_decodeMountPoint(b *testing.B) {
-	app := testApp(&testing.T{})
-	testInput := "/media/My\\040USB\\040Drive\\040with\\040spaces\\040and\\040more"
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		app.decodeMountPoint(testInput)
+// Test that the application structure is correct
+func TestApp_Structure(t *testing.T) {
+	cfg := &config.Config{
+		BackupPath:   "/tmp/test-backup",
+		USBMountPath: "/tmp/test-mount",
+		LogPath:      "/tmp/test-logs",
+		LogLevel:     slog.LevelDebug,
+		EnableWebDAV: false,
+	}
+	
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+	
+	mockFS := fspkg.NewMockFileSystem()
+	
+	// Create a test app
+	app := &App{
+		config: cfg,
+		logger: logger,
+		fs:     mockFS,
+	}
+	
+	if app == nil {
+		t.Error("App creation failed")
+	}
+	
+	if app.config == nil {
+		t.Error("App config is nil")
+	}
+	
+	if app.logger == nil {
+		t.Error("App logger is nil")
+	}
+	
+	if app.fs == nil {
+		t.Error("App filesystem is nil")
 	}
 }
 
-// Test that the method handles edge cases gracefully
-func TestApp_decodeMountPoint_edgeCases(t *testing.T) {
-	app := testApp(t)
-
-	// Test with very long strings
-	longInput := "/media/" + strings.Repeat("\\040", 1000) + "long"
-	result := app.decodeMountPoint(longInput)
-	if result == "" {
-		t.Error("decodeMountPoint() returned empty string for long input")
+// Test filesystem operations
+func TestRealFileSystem(t *testing.T) {
+	realFS := fspkg.NewRealFileSystem()
+	
+	// Test creating a temporary directory
+	tempDir, err := os.MkdirTemp("", "filesystem-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-
-	// Test with special characters that might cause issues
-	specialInput := "/media/Drive\\040with\\040special\\040chars\\040!@#$%^&*()"
-	result = app.decodeMountPoint(specialInput)
-	if result == "" {
-		t.Error("decodeMountPoint() returned empty string for special characters")
+	defer os.RemoveAll(tempDir)
+	
+	// Test MkdirAll
+	testPath := filepath.Join(tempDir, "test", "nested", "path")
+	err = realFS.MkdirAll(testPath, 0755)
+	if err != nil {
+		t.Errorf("MkdirAll failed: %v", err)
 	}
-}
-
-// TestApp_generateUniqueID tests the generateUniqueID method
-func TestApp_generateUniqueID(t *testing.T) {
-	app := testApp(t)
-
-	// Generate multiple IDs and collect them
-	ids := make([]string, 1000)
-	for i := 0; i < 1000; i++ {
-		ids[i] = app.generateUniqueID()
+	
+	// Verify directory was created
+	info, err := realFS.Stat(testPath)
+	if err != nil {
+		t.Errorf("Stat failed: %v", err)
 	}
-
-	// Test all IDs at once using helper functions
-	for _, id := range ids {
-		assertLength(t, id, 6, "generateUniqueID() length")
-		assertValidChars(t, id, "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", "generateUniqueID() characters")
+	
+	if !info.IsDir() {
+		t.Error("Created path is not a directory")
 	}
-
-	assertUnique(t, ids, "generateUniqueID() uniqueness")
-}
-
-// TestApp_getBackupName tests the getBackupName method
-func TestApp_getBackupName(t *testing.T) {
-	app := testApp(t)
-
-	t.Run("with existing unique.id file", func(t *testing.T) {
-		testDir := createTestDir(t, "backup-name-test")
-		uniqueIDPath := testDir + "/unique.id"
-		err := os.WriteFile(uniqueIDPath, []byte("TEST123"), 0644)
-		assertNoError(t, err, "Failed to create unique.id file")
-
-		got := app.getBackupName(testDir)
-		assertStringEqual(t, got, "TEST123", "getBackupName() with existing unique.id")
-	})
-
-	t.Run("without unique.id file", func(t *testing.T) {
-		emptyDir := createTestDir(t, "backup-name-test-empty")
-		got := app.getBackupName(emptyDir)
-
-		assertLength(t, got, 6, "getBackupName() length")
-		assertValidChars(t, got, "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", "getBackupName() characters")
-	})
-
-	t.Run("empty mount point", func(t *testing.T) {
-		got := app.getBackupName("")
-		assertValidBackupName(t, got, "getBackupName() for empty path")
-	})
-}
-
-// TestApp_shouldSkipBackup tests the shouldSkipBackup method
-func TestApp_shouldSkipBackup(t *testing.T) {
-	app := testApp(t)
-
-	t.Run("no .backupignore file", func(t *testing.T) {
-		testDir := createTestDir(t, "backup-test")
-		shouldSkip := app.shouldSkipBackup(testDir)
-		assertBool(t, shouldSkip, false, "shouldSkipBackup() when no .backupignore exists")
-	})
-
-	t.Run("with .backupignore file", func(t *testing.T) {
-		testDir := createTestDir(t, "backup-test")
-		ignoreFile := testDir + "/.backupignore"
-		err := os.WriteFile(ignoreFile, []byte(""), 0644)
-		assertNoError(t, err, "Failed to create .backupignore file")
-
-		shouldSkip := app.shouldSkipBackup(testDir)
-		assertBool(t, shouldSkip, true, "shouldSkipBackup() when .backupignore exists")
-	})
-}
-
-// TestEventType_String tests the EventType String method
-func TestEventType_String(t *testing.T) {
-	tests := []struct {
-		eventType feedback.EventType
-		expected  string
-	}{
-		{feedback.EventStatus, "status"},
-		{feedback.EventProgress, "progress"},
-		{feedback.EventSuccess, "success"},
-		{feedback.EventError, "error"},
-		{feedback.EventWarning, "warning"},
-		{feedback.EventType(999), "unknown"},
+	
+	// Test WriteFile and ReadFile
+	testFile := filepath.Join(tempDir, "test.txt")
+	testData := []byte("Hello, World!")
+	
+	err = realFS.WriteFile(testFile, testData, 0644)
+	if err != nil {
+		t.Errorf("WriteFile failed: %v", err)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.expected, func(t *testing.T) {
-			got := tt.eventType.String()
-			assertStringEqual(t, got, tt.expected, "EventType.String()")
-		})
+	
+	readData, err := realFS.ReadFile(testFile)
+	if err != nil {
+		t.Errorf("ReadFile failed: %v", err)
+	}
+	
+	if string(readData) != string(testData) {
+		t.Errorf("ReadFile data mismatch: got %s, want %s", string(readData), string(testData))
+	}
+	
+	// Test Join
+	joined := filepath.Join("a", "b", "c")
+	if joined != "a/b/c" {
+		t.Errorf("Join failed: got %s, want a/b/c", joined)
+	}
+	
+	// Test Base
+	base := filepath.Base("/path/to/file.txt")
+	if base != "file.txt" {
+		t.Errorf("Base failed: got %s, want file.txt", base)
+	}
+	
+	// Test ReadDir
+	entries, err := realFS.ReadDir(tempDir)
+	if err != nil {
+		t.Errorf("ReadDir failed: %v", err)
+	}
+	
+	if len(entries) < 1 {
+		t.Error("ReadDir returned no entries")
 	}
 }

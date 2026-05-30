@@ -1,4 +1,5 @@
-package main
+// Package config provides configuration management for the application.
+package config
 
 import (
 	"fmt"
@@ -11,7 +12,15 @@ import (
 )
 
 // Config holds application configuration
-// Note: This struct is already defined in main.go, so we're just documenting it here
+type Config struct {
+	BackupPath   string
+	USBMountPath string
+	LogPath      string
+	LogLevel     slog.Level
+	Feedback     feedback.Feedback
+	WebDAVPort   string
+	EnableWebDAV bool
+}
 
 // setupViper configures Viper for configuration management
 func setupViper(configFile string) error {
@@ -75,8 +84,8 @@ func setDefaults() {
 	viper.SetDefault("feedback.led_brightness", 50)
 }
 
-// loadConfig loads configuration from Viper and returns a Config struct
-func loadConfig(configFile string) (*Config, error) {
+// Load loads configuration from Viper and returns a Config struct
+func Load(configFile string) (*Config, error) {
 	// Set up Viper
 	if err := setupViper(configFile); err != nil {
 		return nil, err
@@ -99,7 +108,7 @@ func loadConfig(configFile string) (*Config, error) {
 	}
 
 	// Create config struct
-	config := &Config{
+	cfg := &Config{
 		BackupPath:   viper.GetString("backup.path"),
 		USBMountPath: viper.GetString("backup.usb_mount_path"),
 		LogPath:      viper.GetString("logging.path"),
@@ -131,26 +140,26 @@ func loadConfig(configFile string) (*Config, error) {
 		fb = nil
 	}
 
-	config.Feedback = fb
+	cfg.Feedback = fb
 
-	return config, nil
+	return cfg, nil
 }
 
-// validateConfig validates the loaded configuration
-func validateConfig(config *Config) error {
+// Validate validates the loaded configuration
+func Validate(cfg *Config) error {
 	// Check if backup path is accessible
-	if err := os.MkdirAll(config.BackupPath, 0755); err != nil {
-		return fmt.Errorf("failed to create backup directory %s: %w", config.BackupPath, err)
+	if err := os.MkdirAll(cfg.BackupPath, 0755); err != nil {
+		return fmt.Errorf("failed to create backup directory %s: %w", cfg.BackupPath, err)
 	}
 
 	// Check if USB mount path is accessible
-	if err := os.MkdirAll(config.USBMountPath, 0755); err != nil {
-		return fmt.Errorf("failed to create USB mount directory %s: %w", config.USBMountPath, err)
+	if err := os.MkdirAll(cfg.USBMountPath, 0755); err != nil {
+		return fmt.Errorf("failed to create USB mount directory %s: %w", cfg.USBMountPath, err)
 	}
 
 	// Check if log path is accessible
-	if err := os.MkdirAll(config.LogPath, 0755); err != nil {
-		return fmt.Errorf("failed to create log directory %s: %w", config.LogPath, err)
+	if err := os.MkdirAll(cfg.LogPath, 0755); err != nil {
+		return fmt.Errorf("failed to create log directory %s: %w", cfg.LogPath, err)
 	}
 
 	return nil
