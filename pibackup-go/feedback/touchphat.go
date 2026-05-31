@@ -13,7 +13,6 @@ import (
 
 	"github.com/benjamin/pibackup/pibackup-go/drivers/cap1xxx"
 	"periph.io/x/conn/v3/gpio"
-	"periph.io/x/conn/v3/gpio/gpioreg"
 	"periph.io/x/conn/v3/i2c/i2creg"
 	"periph.io/x/host/v3"
 )
@@ -131,26 +130,9 @@ func NewTouchPhatFeedback() (*TouchPhatFeedback, error) {
 		return nil, fmt.Errorf("failed to open I2C bus: %w", err)
 	}
 
-	// Set up alert pin (GPIO25)
-	alertPin := gpioreg.ByName("GPIO25")
-	if alertPin == nil {
-		return nil, fmt.Errorf("invalid alert GPIO pin number")
-	}
-	if err := alertPin.In(gpio.PullUp, gpio.BothEdges); err != nil {
-		return nil, fmt.Errorf("can't monitor the alert pin: %w", err)
-	}
-
-	// Set up reset pin (GPIO21)
-	resetPin := gpioreg.ByName("GPIO21")
-	if resetPin == nil {
-		return nil, fmt.Errorf("invalid reset GPIO pin number")
-	}
-
 	// Configure CAP1166
 	opts := cap1xxx.DefaultOpts
 	opts.I2CAddr = 0x2C
-	opts.AlertPin = alertPin
-	opts.ResetPin = resetPin
 	opts.LinkedLEDs = false
 
 	dev, err := cap1xxx.NewI2C(i2cBus, &opts)
@@ -167,8 +149,6 @@ func NewTouchPhatFeedback() (*TouchPhatFeedback, error) {
 
 	fb := &TouchPhatFeedback{
 		dev:            dev,
-		alertPin:       alertPin,
-		resetPin:       resetPin,
 		ledStates:      make(map[int]bool),
 		ctx:            ctx,
 		cancel:         cancel,
