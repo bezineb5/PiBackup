@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/benjamin/pibackup/pibackup-go/drivers/cap1xxx"
-	"periph.io/x/conn/v3/gpio"
 	"periph.io/x/conn/v3/i2c/i2creg"
 	"periph.io/x/host/v3"
 )
@@ -90,10 +89,10 @@ var buttonMapping = map[int]TouchFeature{
 	0: Enter,
 }
 
-// LEDMapping: map[TouchFeature]int
+// ledMapping: map[TouchFeature]int
 // Maps TouchFeature to LED channel number
 // TouchPhat has reversed LED mapping: Back→5, A→4, B→3, C→2, D→1, Enter→0
-var LEDMapping = map[TouchFeature]int{
+var ledMapping = map[TouchFeature]int{
 	Back:  5,
 	A:     4,
 	B:     3,
@@ -108,8 +107,6 @@ const LongPressDuration = 1 * time.Second
 // TouchPhatFeedback implements HardwareController for Pimoroni TouchPhat.
 type TouchPhatFeedback struct {
 	dev            *cap1xxx.Dev
-	alertPin       gpio.PinIn
-	resetPin       gpio.PinOut
 	ledStates      map[int]bool
 	ctx            context.Context
 	cancel         context.CancelFunc
@@ -168,13 +165,20 @@ func NewTouchPhatFeedback() (*TouchPhatFeedback, error) {
 // Notify handles user feedback events
 func (fb *TouchPhatFeedback) Notify(event Event) {
 	switch event.Type {
+	case EventStatus:
+		// For generic status updates, briefly pulse the Sync LED
+		fb.BlinkLED(Sync, 50*time.Millisecond, 1)
 	case EventProgress:
 		fb.SetLED(Sync, true)
 	case EventSuccess:
 		fb.SetLED(Sync, false)
+		// Flash Sync LED to indicate success
+		fb.BlinkLED(Sync, 100*time.Millisecond, 3)
 	case EventError:
+		fb.SetLED(Sync, false)
 		fb.BlinkLED(Warning, 100*time.Millisecond, 5)
 	case EventWarning:
+		fb.SetLED(Sync, false)
 		fb.BlinkLED(Warning, 300*time.Millisecond, 3)
 	}
 }
@@ -194,10 +198,10 @@ func (fb *TouchPhatFeedback) Halt() error {
 func (fb *TouchPhatFeedback) Shutdown() {
 	slog.Info("Shutting down TouchPhat")
 	fb.BlinkLED(Power, 100*time.Millisecond, 5)
+	time.Sleep(1 * time.Second)
 	close(fb.touchChan)
 	fb.cancel()
-	time.Sleep(1 * time.Second)
-	for _, led := range LEDMapping {
+	for _, led := range ledMapping {
 		fb.dev.SetLED(led, false)
 	}
 	fb.dev.Halt()
@@ -250,7 +254,6 @@ func (fb *TouchPhatFeedback) monitorTouchEvents() {
 					case Sync:
 						slog.Info("Backup button pressed")
 						fb.touchChan <- TouchManualBackup
-						fb.SetLED(Sync, true)
 					}
 				}
 			}
@@ -268,7 +271,7 @@ func (fb *TouchPhatFeedback) SetLED(feedbackFeature FeedbackFeature, state bool)
 
 // SetLED sets an LED by TouchFeature
 func (fb *TouchPhatFeedback) setFeatureLED(feature TouchFeature, state bool) {
-	led := LEDMapping[feature]
+	led := ledMapping[feature]
 	fb.ledStates[led] = state
 	fb.dev.SetLED(led, state)
 }

@@ -154,10 +154,6 @@ func TestApp_Structure(t *testing.T) {
 		fs:     mockFS,
 	}
 
-	if app == nil {
-		t.Error("App creation failed")
-	}
-
 	if app.config == nil {
 		t.Error("App config is nil")
 	}

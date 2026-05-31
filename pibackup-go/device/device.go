@@ -144,7 +144,7 @@ func (s *Service) ProcessDevice(ctx context.Context, device string) error {
 		s.logger.Info("device has no medium, skipping", "device", devicePath)
 		if s.feedback != nil {
 			s.feedback.Notify(feedback.Event{
-				Type:      feedback.EventStatus,
+				Type:      feedback.EventWarning,
 				Message:   fmt.Sprintf("Device skipped: %s (no medium)", deviceName),
 				Device:    deviceName,
 				Progress:  0,
@@ -160,7 +160,7 @@ func (s *Service) ProcessDevice(ctx context.Context, device string) error {
 		s.logger.Info("skipping whole-disk device with partitions, will process partitions directly", "device", devicePath)
 		if s.feedback != nil {
 			s.feedback.Notify(feedback.Event{
-				Type:      feedback.EventStatus,
+				Type:      feedback.EventWarning,
 				Message:   fmt.Sprintf("Device skipped: %s (has partitions)", deviceName),
 				Device:    deviceName,
 				Progress:  0,
@@ -173,7 +173,7 @@ func (s *Service) ProcessDevice(ctx context.Context, device string) error {
 	s.logger.Info("backup started", "device", device)
 	if s.feedback != nil {
 		s.feedback.Notify(feedback.Event{
-			Type:      feedback.EventStatus,
+			Type:      feedback.EventProgress,
 			Message:   fmt.Sprintf("Starting backup: %s", deviceName),
 			Device:    deviceName,
 			Progress:  0,
@@ -208,7 +208,7 @@ func (s *Service) ProcessDevice(ctx context.Context, device string) error {
 	if s.shouldSkipBackup(mountInfo.MountPoint) {
 		if s.feedback != nil {
 			s.feedback.Notify(feedback.Event{
-				Type:      feedback.EventStatus,
+				Type:      feedback.EventWarning,
 				Message:   fmt.Sprintf("Backup skipped: %s (.backupignore)", deviceName),
 				Device:    deviceName,
 				Progress:  0,
@@ -227,7 +227,7 @@ func (s *Service) ProcessExistingDevices(ctx context.Context) {
 	s.logger.Info("processing existing devices")
 	if s.feedback != nil {
 		s.feedback.Notify(feedback.Event{
-			Type:      feedback.EventStatus,
+			Type:      feedback.EventProgress,
 			Message:   "Scanning for existing devices...",
 			Device:    "",
 			Progress:  0,
@@ -239,10 +239,10 @@ func (s *Service) ProcessExistingDevices(ctx context.Context) {
 	s.logger.Info("device scan completed", "count", len(devices))
 	if s.feedback != nil {
 		s.feedback.Notify(feedback.Event{
-			Type:      feedback.EventStatus,
+			Type:      feedback.EventProgress,
 			Message:   fmt.Sprintf("Found %d existing devices", len(devices)),
 			Device:    "",
-			Progress:  0,
+			Progress:  5,
 			Timestamp: time.Now(),
 		})
 	}
@@ -251,10 +251,10 @@ func (s *Service) ProcessExistingDevices(ctx context.Context) {
 		s.logger.Info("processing existing device", "device", device, "type", "existing")
 		if s.feedback != nil {
 			s.feedback.Notify(feedback.Event{
-				Type:      feedback.EventStatus,
+				Type:      feedback.EventProgress,
 				Message:   fmt.Sprintf("Processing existing device: %s", filepath.Base(device)),
 				Device:    filepath.Base(device),
-				Progress:  0,
+				Progress:  5,
 				Timestamp: time.Now(),
 			})
 		}
@@ -270,6 +270,27 @@ func (s *Service) ProcessExistingDevices(ctx context.Context) {
 					Timestamp: time.Now(),
 				})
 			}
+		}
+	}
+
+	// Send final status after processing all devices
+	if s.feedback != nil {
+		if len(devices) == 0 {
+			s.feedback.Notify(feedback.Event{
+				Type:      feedback.EventWarning,
+				Message:   "No devices found to backup",
+				Device:    "",
+				Progress:  100,
+				Timestamp: time.Now(),
+			})
+		} else {
+			s.feedback.Notify(feedback.Event{
+				Type:      feedback.EventSuccess,
+				Message:   fmt.Sprintf("Processed %d device(s)", len(devices)),
+				Device:    "",
+				Progress:  100,
+				Timestamp: time.Now(),
+			})
 		}
 	}
 }
@@ -304,10 +325,10 @@ func (s *Service) handleExistingMount(device, deviceName string) MountInfo {
 	s.logger.Info("using existing mount point", "device", device, "mount_point", mountPoint)
 	if s.feedback != nil {
 		s.feedback.Notify(feedback.Event{
-			Type:      feedback.EventStatus,
+			Type:      feedback.EventProgress,
 			Message:   fmt.Sprintf("Using existing mount: %s", mountPoint),
 			Device:    deviceName,
-			Progress:  0,
+			Progress:  15,
 			Timestamp: time.Now(),
 		})
 	}
@@ -357,7 +378,7 @@ func (s *Service) mountDevice(device, mountPoint, deviceName string) MountInfo {
 	s.logger.Info("attempting to mount device", "device", device, "mount_point", mountPoint)
 	if s.feedback != nil {
 		s.feedback.Notify(feedback.Event{
-			Type:      feedback.EventStatus,
+			Type:      feedback.EventProgress,
 			Message:   fmt.Sprintf("Mounting device: %s", deviceName),
 			Device:    deviceName,
 			Progress:  10,
@@ -381,7 +402,7 @@ func (s *Service) mountDevice(device, mountPoint, deviceName string) MountInfo {
 	s.logger.Info("device mounted successfully", "device", device, "mount_point", mountPoint)
 	if s.feedback != nil {
 		s.feedback.Notify(feedback.Event{
-			Type:      feedback.EventStatus,
+			Type:      feedback.EventProgress,
 			Message:   fmt.Sprintf("Device mounted: %s", deviceName),
 			Device:    deviceName,
 			Progress:  20,
@@ -404,7 +425,7 @@ func (s *Service) cleanupMount(mountInfo MountInfo, deviceName string) {
 	s.logger.Info("attempting to unmount device", "mount_point", mountInfo.MountPoint)
 	if s.feedback != nil {
 		s.feedback.Notify(feedback.Event{
-			Type:      feedback.EventStatus,
+			Type:      feedback.EventProgress,
 			Message:   fmt.Sprintf("Unmounting device: %s", deviceName),
 			Device:    deviceName,
 			Progress:  90,
@@ -431,7 +452,7 @@ func (s *Service) performBackup(ctx context.Context, mountPoint, device, deviceN
 	s.logger.Info("preparing backup", "device", device, "source", mountPoint, "destination", backupDir)
 	if s.feedback != nil {
 		s.feedback.Notify(feedback.Event{
-			Type:      feedback.EventStatus,
+			Type:      feedback.EventProgress,
 			Message:   fmt.Sprintf("Backing up: %s", deviceName),
 			Device:    deviceName,
 			Progress:  30,
@@ -536,10 +557,10 @@ func (s *Service) hasValidFilesystem(mountPoint string) bool {
 	s.logger.Debug("checking filesystem validity", "mount_point", mountPoint)
 	if s.feedback != nil {
 		s.feedback.Notify(feedback.Event{
-			Type:      feedback.EventStatus,
+			Type:      feedback.EventProgress,
 			Message:   fmt.Sprintf("Checking filesystem: %s", mountPoint),
 			Device:    "",
-			Progress:  0,
+			Progress:  25,
 			Timestamp: time.Now(),
 		})
 	}
@@ -590,10 +611,10 @@ func (s *Service) hasValidFilesystem(mountPoint string) bool {
 	s.logger.Debug("filesystem check", "mount_point", mountPoint, "file_count", len(files))
 	if s.feedback != nil {
 		s.feedback.Notify(feedback.Event{
-			Type:      feedback.EventStatus,
+			Type:      feedback.EventProgress,
 			Message:   fmt.Sprintf("Filesystem check: %d files found", len(files)),
 			Device:    "",
-			Progress:  0,
+			Progress:  25,
 			Timestamp: time.Now(),
 		})
 	}
