@@ -129,9 +129,9 @@ func (app *App) Run() error {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Start touch event handler if CAP1166 feedback is available
+	// Start touch event handler if TouchPhat feedback is available
 	var touchChan <-chan feedback.TouchEventType
-	if capFeedback, ok := app.config.Feedback.(*feedback.CAP1166Feedback); ok {
+	if capFeedback, ok := app.config.Feedback.(*feedback.TouchPhatFeedback); ok {
 		touchChan = capFeedback.TouchEvents()
 	}
 

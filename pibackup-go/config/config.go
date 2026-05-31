@@ -80,7 +80,7 @@ func setDefaults() {
 	viper.SetDefault("webdav.password", "")
 
 	// Feedback settings
-	viper.SetDefault("feedback.type", "cap1166")
+	viper.SetDefault("feedback.type", "touchphat")
 	viper.SetDefault("feedback.led_brightness", 50)
 }
 
@@ -123,10 +123,10 @@ func Load(configFile string) (*Config, error) {
 	var err error
 
 	switch feedbackType {
-	case "cap1166":
-		fb, err = feedback.NewCAP1166Feedback()
+	case "touchphat":
+		fb, err = feedback.NewTouchPhatFeedback()
 		if err != nil {
-			fmt.Printf("Failed to initialize CAP1166 feedback, falling back to none: %v\n", err)
+			fmt.Printf("Failed to initialize TouchPhat feedback, falling back to none: %v\n", err)
 			fb = nil
 		}
 	case "console":

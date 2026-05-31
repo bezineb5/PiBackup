@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/benjamin/pibackup/pibackup-go/backup"
 	"github.com/benjamin/pibackup/pibackup-go/config"
@@ -139,6 +141,27 @@ func runApp(cmd *cobra.Command, args []string) error {
 	return app.Run()
 }
 
+// formatConsoleAttr formats attributes for human-readable console output
+func formatConsoleAttr(groups []string, a slog.Attr) slog.Attr {
+	if a.Key == slog.TimeKey {
+		if t, ok := a.Value.Any().(time.Time); ok {
+			return slog.Attr{
+				Key:   "time",
+				Value: slog.StringValue(t.Format("15:04:05.000")),
+			}
+		}
+	}
+	if a.Key == slog.LevelKey {
+		if l, ok := a.Value.Any().(slog.Level); ok {
+			return slog.Attr{
+				Key:   "level",
+				Value: slog.StringValue(fmt.Sprintf("[%s]", strings.ToUpper(l.String()))),
+			}
+		}
+	}
+	return a
+}
+
 // setupLogging configures structured logging with rotation and console output
 func setupLogging(cfg *config.Config) (*slog.Logger, error) {
 	// Create log directory if it doesn't exist
@@ -155,7 +178,7 @@ func setupLogging(cfg *config.Config) (*slog.Logger, error) {
 		Compress:   viper.GetBool("logging.compress"),   // Compress old files
 	}
 
-	// Create a multi-handler that writes JSON to file and text to console
+	// Create a multi-handler that writes JSON to file and human-readable text to console
 	logger := slog.New(
 		NewMultiHandler(
 			slog.NewJSONHandler(fileWriter, &slog.HandlerOptions{
@@ -163,7 +186,8 @@ func setupLogging(cfg *config.Config) (*slog.Logger, error) {
 				AddSource: true,
 			}),
 			slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-				Level: cfg.LogLevel,
+				Level:       cfg.LogLevel,
+				ReplaceAttr: formatConsoleAttr,
 			}),
 		),
 	)
