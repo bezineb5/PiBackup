@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -66,6 +67,23 @@ func NewApp(
 	}
 }
 
+// cleanup performs consistent shutdown cleanup
+func (app *App) cleanup() {
+	app.cancel()
+
+	if app.webdavSrv != nil {
+		if err := app.webdavSrv.Stop(); err != nil {
+			app.logger.Error("failed to stop WebDAV server", "error", err)
+		}
+	}
+
+	if app.config.Feedback != nil {
+		if err := app.config.Feedback.Halt(); err != nil {
+			app.logger.Error("failed to halt feedback", "error", err)
+		}
+	}
+}
+
 // Run starts the application
 func (app *App) Run() error {
 	// Set as default logger
@@ -82,6 +100,7 @@ func (app *App) Run() error {
 
 	// Create backup directory if it doesn't exist
 	if err := app.fs.MkdirAll(app.config.BackupPath, 0755); err != nil {
+		app.cleanup()
 		return fmt.Errorf("failed to create backup directory: %w", err)
 	}
 
@@ -98,6 +117,8 @@ func (app *App) Run() error {
 					Error:     err,
 				})
 			}
+			app.cleanup()
+			return err
 		} else {
 			app.logger.Info("WebDAV server started", "port", app.config.WebDAVPort)
 			if app.config.Feedback != nil {
@@ -117,6 +138,7 @@ func (app *App) Run() error {
 	} else {
 		// Fallback: watch /dev for new block devices
 		if err := app.watcher.Add("/dev"); err != nil {
+			app.cleanup()
 			return fmt.Errorf("failed to watch /dev: %w", err)
 		}
 		app.logger.Info("watcher started (fallback mode)", "path", "/dev")
@@ -164,31 +186,10 @@ func (app *App) Run() error {
 			app.handleTouchEvent(event)
 		case sig := <-sigChan:
 			app.logger.Info("shutting down", "signal", sig.String())
-			if app.config.Feedback != nil {
-				app.config.Feedback.Notify(feedback.Event{
-					Type:      feedback.EventStatus,
-					Message:   "Shutting down...",
-					Timestamp: time.Now(),
-				})
-			}
-			app.cancel()
-
-			// Stop WebDAV server
-			if app.webdavSrv != nil {
-				if err := app.webdavSrv.Stop(); err != nil {
-					app.logger.Error("failed to stop WebDAV server", "error", err)
-				}
-			}
-
-			// Halt feedback implementation
-			if app.config.Feedback != nil {
-				if err := app.config.Feedback.Halt(); err != nil {
-					app.logger.Error("failed to halt feedback", "error", err)
-				}
-			}
-
+			app.cleanup()
 			return nil
 		case <-app.ctx.Done():
+			app.cleanup()
 			return nil
 		}
 	}
@@ -258,7 +259,11 @@ func (app *App) handleTouchEvent(event feedback.TouchEventType) {
 		app.deviceService.ProcessExistingDevices(app.ctx)
 	case feedback.TouchShutdown:
 		app.logger.Info("shutdown triggered via touch")
-		app.cancel()
+		app.cleanup()
+		// Actually shut down the machine
+		if err := exec.Command("shutdown", "now").Start(); err != nil {
+			app.logger.Error("failed to execute shutdown command", "error", err)
+		}
 	}
 }
 
