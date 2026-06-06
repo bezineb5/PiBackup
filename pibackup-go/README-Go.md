@@ -29,21 +29,21 @@ A simple, lightweight photo backup tool for Raspberry Pi written in Go.
 ## Build
 
 ```bash
-./build.sh
+make build
 ```
 
-This creates a `pibackup` binary for ARM (Raspberry Pi).
+This creates a `pibackup-go` binary for ARM (Raspberry Pi).
 
 ## Install
 
 1. **Copy binary to Pi:**
    ```bash
-   scp pibackup pi@your-pi:/home/pi/pibackup/
+   scp pibackup-go pi@your-pi:/home/pi/
    ```
 
 2. **Make executable:**
    ```bash
-   chmod +x pibackup
+   chmod +x pibackup-go
    ```
 
 3. **Install service:**
@@ -72,16 +72,16 @@ The application supports command-line flags for configuration overrides:
 
 ```bash
 # Show help
-./pibackup --help
+./pibackup-go --help
 
 # Use custom config file
-./pibackup --config /path/to/config.yaml
+./pibackup-go --config /path/to/config.yaml
 
 # Override specific settings
-./pibackup --backup-path /custom/backup/path --log-level debug
+./pibackup-go --backup-path /custom/backup/path --log-level debug
 
 # Combine config file with overrides
-./pibackup --config config.yaml --webdav-port 8080 --feedback console
+./pibackup-go --config config.yaml --webdav-port 8080 --feedback console
 ```
 
 #### Available Flags
