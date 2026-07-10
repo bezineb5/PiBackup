@@ -115,7 +115,7 @@ func runApp(cmd *cobra.Command, args []string) error {
 		},
 	)
 
-	mountService := mount.NewService(logger, realFS)
+	mountService := mount.NewService(logger, realFS, cfg.ReadOnlyMounts)
 
 	backupService := backup.NewService(
 		logger,

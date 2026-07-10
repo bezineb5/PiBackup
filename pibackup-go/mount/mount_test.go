@@ -14,7 +14,7 @@ func TestNewService(t *testing.T) {
 	logger := slog.Default()
 	mockFS := &fs.MockFileSystem{}
 
-	service := NewService(logger, mockFS)
+	service := NewService(logger, mockFS, false)
 	if service == nil {
 		t.Fatal("NewService returned nil")
 	}
@@ -25,7 +25,7 @@ func TestIsMounted(t *testing.T) {
 
 	// Create a real filesystem
 	realFS := fs.RealFileSystem{}
-	service := NewService(logger, realFS)
+	service := NewService(logger, realFS, false)
 
 	// Test with a device that's unlikely to be mounted
 	// This will return false
@@ -40,7 +40,7 @@ func TestGetMountPoint(t *testing.T) {
 
 	// Create a real filesystem
 	realFS := fs.RealFileSystem{}
-	service := NewService(logger, realFS)
+	service := NewService(logger, realFS, false)
 
 	// Test with a device that's unlikely to be mounted
 	mountPoint := service.GetMountPoint("/dev/sda999")
@@ -54,7 +54,7 @@ func TestIsMountPointInUse(t *testing.T) {
 
 	// Create a real filesystem
 	realFS := fs.RealFileSystem{}
-	service := NewService(logger, realFS)
+	service := NewService(logger, realFS, false)
 
 	// Test with a mount point that's unlikely to be in use
 	// This will return false
@@ -75,7 +75,7 @@ func TestMountAndUnmount(t *testing.T) {
 	// Create a real filesystem
 	realFS := fs.RealFileSystem{}
 	logger := slog.Default()
-	service := NewService(logger, realFS)
+	service := NewService(logger, realFS, false)
 
 	// Create a mount point
 	mountPoint := filepath.Join(tmpDir, "mount")

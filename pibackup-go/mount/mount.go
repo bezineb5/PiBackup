@@ -15,15 +15,17 @@ import (
 
 // Service handles mount operations
 type Service struct {
-	logger *slog.Logger
-	fs     fs.FileSystem
+	logger   *slog.Logger
+	fs       fs.FileSystem
+	readOnly bool
 }
 
 // NewService creates a new mount service
-func NewService(logger *slog.Logger, fs fs.FileSystem) *Service {
+func NewService(logger *slog.Logger, fs fs.FileSystem, readOnly bool) *Service {
 	return &Service{
-		logger: logger,
-		fs:     fs,
+		logger:   logger,
+		fs:       fs,
+		readOnly: readOnly,
 	}
 }
 
@@ -137,24 +139,38 @@ func (s *Service) IsMountPointInUse(mountPoint string) bool {
 	return false
 }
 
-// Mount mounts a device to a mount point
+// Mount mounts a device to a mount point with noatime to prevent metadata writes on read
 func (s *Service) Mount(ctx context.Context, device, mountPoint string) error {
 	devicePath := filepath.Join("/dev", device)
 	s.logger.Info("attempting to mount device", "device", device, "mount_point", mountPoint)
 
-	cmd := exec.CommandContext(ctx, "mount", devicePath, mountPoint)
+	// Build mount options: always use noatime, add ro if readOnly is enabled
+	options := []string{"noatime"}
+	if s.readOnly {
+		options = append(options, "ro")
+	}
+
+	cmd := exec.CommandContext(ctx, "mount", "-o", strings.Join(options, ","), devicePath, mountPoint)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to mount device: %w (output: %s)", err, string(output))
 	}
 
-	s.logger.Info("device mounted successfully", "device", device, "mount_point", mountPoint)
+	s.logger.Info("device mounted successfully", "device", device, "mount_point", mountPoint, "read_only", s.readOnly)
 	return nil
 }
 
 // Unmount unmounts a device from its mount point
 func (s *Service) Unmount(ctx context.Context, mountPoint string) error {
 	s.logger.Info("attempting to unmount device", "mount_point", mountPoint)
+
+	// Sync filesystem first to ensure all writes are flushed before unmounting
+	s.logger.Debug("syncing filesystem before unmount", "mount_point", mountPoint)
+	syncCmd := exec.CommandContext(ctx, "sync")
+	if err := syncCmd.Run(); err != nil {
+		s.logger.Error("sync failed before unmount", "mount_point", mountPoint, "error", err)
+		// Continue with unmount even if sync fails
+	}
 
 	cmd := exec.CommandContext(ctx, "umount", mountPoint)
 	if err := cmd.Run(); err != nil {

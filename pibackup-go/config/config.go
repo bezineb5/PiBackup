@@ -13,13 +13,14 @@ import (
 
 // Config holds application configuration
 type Config struct {
-	BackupPath   string
-	USBMountPath string
-	LogPath      string
-	LogLevel     slog.Level
-	Feedback     feedback.Feedback
-	WebDAVPort   string
-	EnableWebDAV bool
+	BackupPath     string
+	USBMountPath   string
+	LogPath        string
+	LogLevel       slog.Level
+	Feedback       feedback.Feedback
+	WebDAVPort     string
+	EnableWebDAV   bool
+	ReadOnlyMounts bool
 }
 
 // setupViper configures Viper for configuration management
@@ -79,6 +80,9 @@ func setDefaults() {
 	viper.SetDefault("webdav.username", "")
 	viper.SetDefault("webdav.password", "")
 
+	// Mount settings
+	viper.SetDefault("mount.readonly", false)
+
 	// Feedback settings
 	viper.SetDefault("feedback.type", "touchphat")
 	viper.SetDefault("feedback.led_brightness", 50)
@@ -109,12 +113,13 @@ func Load(configFile string) (*Config, error) {
 
 	// Create config struct
 	cfg := &Config{
-		BackupPath:   viper.GetString("backup.path"),
-		USBMountPath: viper.GetString("backup.usb_mount_path"),
-		LogPath:      viper.GetString("logging.path"),
-		LogLevel:     logLevel,
-		WebDAVPort:   viper.GetString("webdav.port"),
-		EnableWebDAV: viper.GetBool("webdav.enabled"),
+		BackupPath:     viper.GetString("backup.path"),
+		USBMountPath:   viper.GetString("backup.usb_mount_path"),
+		LogPath:        viper.GetString("logging.path"),
+		LogLevel:       logLevel,
+		WebDAVPort:     viper.GetString("webdav.port"),
+		EnableWebDAV:   viper.GetBool("webdav.enabled"),
+		ReadOnlyMounts: viper.GetBool("mount.readonly"),
 	}
 
 	// Set up feedback implementation
