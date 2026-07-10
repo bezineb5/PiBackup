@@ -634,6 +634,53 @@ func (s *Service) shouldSkipBackup(mountPoint string) bool {
 	return false
 }
 
+// getDeviceIdentifierFromMount gets device identifier (UUID or SERIAL) from mounted device
+func (s *Service) getDeviceIdentifierFromMount(mountPoint string) string {
+	// Parse /proc/mounts to find device mounted at mountPoint
+	data, err := s.fs.ReadFile("/proc/mounts")
+	if err != nil {
+		s.logger.Debug("failed to read /proc/mounts", "error", err)
+		return ""
+	}
+
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		// fields[0] = device, fields[1] = mount point
+		if fields[1] == mountPoint {
+			devicePath := fields[0]
+			s.logger.Debug("found device for mount point", "device", devicePath, "mount_point", mountPoint)
+
+			// Use blkid to get UUID or SERIAL
+			cmd := exec.Command("blkid", "-s", "UUID", "-s", "SERIAL", "-o", "value", devicePath)
+			output, err := cmd.Output()
+			if err != nil {
+				s.logger.Debug("failed to get device info with blkid", "device", devicePath, "error", err)
+				return ""
+			}
+
+			identifier := strings.TrimSpace(string(output))
+			if identifier != "" {
+				// Sanitize for filesystem: replace invalid chars with underscore
+				safeIdentifier := s.sanitizeFilename(identifier)
+				if safeIdentifier != "" {
+					s.logger.Debug("using device identifier", "identifier", safeIdentifier)
+					return safeIdentifier
+				}
+			}
+			// Fallback to sanitized device path
+			return s.sanitizeFilename(devicePath)
+		}
+	}
+
+	return ""
+}
+
 // getBackupName generates a unique backup name
 func (s *Service) getBackupName(mountPoint string) string {
 	// Check for unique.id file
@@ -641,8 +688,16 @@ func (s *Service) getBackupName(mountPoint string) string {
 	if data, err := s.fs.ReadFile(uniqueIDPath); err == nil {
 		name := strings.TrimSpace(string(data))
 		if name != "" {
+			s.logger.Debug("using unique.id from device", "id", name)
 			return name
 		}
+	}
+
+	// Try to get device serial/UUID as fallback
+	deviceID := s.getDeviceIdentifierFromMount(mountPoint)
+	if deviceID != "" {
+		s.logger.Info("using device identifier as backup name", "mount_point", mountPoint, "id", deviceID)
+		return deviceID
 	}
 
 	// Generate a unique ID and try to store it on the device
@@ -719,6 +774,34 @@ func (s *Service) hasPartitions(deviceName string) bool {
 		}
 	}
 
+	return false
+}
+
+// sanitizeFilename makes a string safe for use as a filename
+func (s *Service) sanitizeFilename(name string) string {
+	// Replace invalid filename characters with underscore
+	// Invalid: < > : " / \ | ? * and control characters
+	var result strings.Builder
+	for _, r := range name {
+		if !isSafeFilenameRune(r) {
+			result.WriteRune('_')
+		} else {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
+// isSafeFilenameRune checks if a rune is safe for filenames
+func isSafeFilenameRune(r rune) bool {
+	// Allow alphanumeric, hyphen, underscore, period, space
+	if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		return true
+	}
+	switch r {
+	case '-', '_', '.', ' ':
+		return true
+	}
 	return false
 }
 
@@ -856,7 +939,7 @@ func (s *Service) parseMounts() ([]MountEntry, error) {
 	}
 
 	var entries []MountEntry
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		if line == "" {
 			continue
 		}

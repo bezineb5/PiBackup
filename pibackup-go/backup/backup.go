@@ -5,11 +5,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/benjamin/pibackup/pibackup-go/feedback"
@@ -178,40 +176,4 @@ func (s *Service) ShouldSkipBackup(mountPoint string) bool {
 		return true
 	}
 	return false
-}
-
-// GetBackupName generates a unique backup name
-func (s *Service) GetBackupName(mountPoint string) string {
-	// Check for unique.id file
-	uniqueIDPath := filepath.Join(mountPoint, "unique.id")
-	if data, err := s.fs.ReadFile(uniqueIDPath); err == nil {
-		name := strings.TrimSpace(string(data))
-		if name != "" {
-			return name
-		}
-	}
-
-	// Generate a unique ID and try to store it on the device
-	uniqueID := s.generateUniqueID()
-
-	// Try to write the unique ID to the device
-	if err := s.fs.WriteFile(uniqueIDPath, []byte(uniqueID), 0644); err == nil {
-		s.logger.Info("generated and stored unique ID", "device", mountPoint, "id", uniqueID)
-		return uniqueID
-	} else {
-		s.logger.Warn("failed to store unique ID on device", "device", mountPoint, "error", err)
-	}
-
-	// Use timestamp as fallback
-	return fmt.Sprintf("backup_%s", time.Now().Format("20060102_150405"))
-}
-
-// generateUniqueID creates a random 6-character ID
-func (s *Service) generateUniqueID() string {
-	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	b := make([]byte, 6)
-	for i := range b {
-		b[i] = charset[rand.IntN(len(charset))]
-	}
-	return string(b)
 }
