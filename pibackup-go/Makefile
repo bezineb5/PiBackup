@@ -2,11 +2,17 @@
 
 BINARY_NAME := pibackup-go
 
-.PHONY: all build clean install test
+.PHONY: all build clean install test help
 
-all: build
+all: build ## Build the project (default)
 
-build:
+help: ## Show this help message
+	@echo "Usage: make [target]"
+	@echo ""
+	@echo "Available targets:"
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
+
+build: ## Build the binary for Raspberry Pi (ARM6)
 	@echo "Building PiBackup Go..."
 	GOOS=linux GOARCH=arm GOARM=6 go build -o $(BINARY_NAME) .
 	@if [ $$? -eq 0 ]; then \
@@ -24,15 +30,15 @@ build:
 		exit 1; \
 	fi
 
-test:
+test: ## Run all Go tests
 	@echo "Running tests..."
 	go test -v ./...
 
-clean:
+clean: ## Remove the built binary
 	rm -f $(BINARY_NAME)
 	@echo "Cleaned up binary: $(BINARY_NAME)"
 
-install: build
+install: build ## Build and make binary executable
 	@echo "Installing..."
 	chmod +x $(BINARY_NAME)
 	@echo "Remember to copy the binary to your Raspberry Pi and set up the service manually."
