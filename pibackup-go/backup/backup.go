@@ -80,7 +80,7 @@ func (s *Service) Run(ctx context.Context, mountPoint, device, deviceName string
 	}
 
 	startTime := time.Now()
-	backupName := s.getBackupName(mountPoint)
+	backupName := s.getBackupName(ctx, mountPoint)
 	backupDir := filepath.Join(s.config.BackupPath, backupName)
 
 	s.logger.Info("preparing backup", "device", device, "source", mountPoint, "destination", backupDir)
@@ -92,7 +92,7 @@ func (s *Service) Run(ctx context.Context, mountPoint, device, deviceName string
 		return err
 	}
 
-	s.performPostBackupTasks(backupDir)
+	s.performPostBackupTasks(ctx, backupDir)
 
 	duration := time.Since(startTime)
 	s.logger.Info("backup completed successfully",
@@ -133,11 +133,18 @@ func (s *Service) runRsync(ctx context.Context, source, destination, device, dev
 
 // performPostBackupTasks flushes the destination disk buffers and refreshes
 // the destination directory timestamp so the most recent backup is obvious.
-func (s *Service) performPostBackupTasks(backupDir string) {
-	if err := exec.CommandContext(context.Background(), "sync").Run(); err != nil {
+// Both commands honour the provided context so shutdown interrupts them.
+func (s *Service) performPostBackupTasks(ctx context.Context, backupDir string) {
+	if err := exec.CommandContext(ctx, "sync").Run(); err != nil {
+		if ctx.Err() != nil {
+			return // cancelled; no point logging a forced-kill as a warning
+		}
 		s.logger.Warn("failed to flush disk buffers", "error", err)
 	}
-	if err := exec.CommandContext(context.Background(), "touch", backupDir).Run(); err != nil {
+	if err := exec.CommandContext(ctx, "touch", backupDir).Run(); err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		s.logger.Warn("failed to update destination timestamp", "error", err)
 	}
 }
@@ -182,7 +189,7 @@ func (s *Service) shouldSkipBackup(mountPoint string) bool {
 //  2. The Pi-side name registry, keyed by the device's stable blkid UUID/serial.
 //     On first sight a fresh 6-char ID is generated and persisted there.
 //  3. A timestamp fallback if no stable identifier could be determined.
-func (s *Service) getBackupName(mountPoint string) string {
+func (s *Service) getBackupName(ctx context.Context, mountPoint string) string {
 	// 1. Existing unique.id on the source (read-only; never written).
 	if data, err := s.fs.ReadFile(filepath.Join(mountPoint, "unique.id")); err == nil {
 		if name := strings.TrimSpace(string(data)); name != "" {
@@ -192,7 +199,7 @@ func (s *Service) getBackupName(mountPoint string) string {
 	}
 
 	// 2. Stable device identifier + Pi-side name registry.
-	deviceKey := s.getDeviceIdentifierFromMount(mountPoint)
+	deviceKey := s.getDeviceIdentifierFromMount(ctx, mountPoint)
 	if deviceKey != "" {
 		if name, err := s.names.Lookup(deviceKey); err == nil && name != "" {
 			s.logger.Info("using registered device name", "id", deviceKey, "name", name)
@@ -228,8 +235,9 @@ func (s *Service) generateUniqueID() string {
 
 // getDeviceIdentifierFromMount looks up the block device backing mountPoint
 // in /proc/mounts and returns a sanitised blkid UUID or serial for it. It only
-// reads from the source (via blkid); it never writes to the card.
-func (s *Service) getDeviceIdentifierFromMount(mountPoint string) string {
+// reads from the source (via blkid); it never writes to the card. It honours
+// the provided context so shutdown interrupts the blkid lookup.
+func (s *Service) getDeviceIdentifierFromMount(ctx context.Context, mountPoint string) string {
 	data, err := s.fs.ReadFile("/proc/mounts")
 	if err != nil {
 		s.logger.Debug("failed to read /proc/mounts", "error", err)
@@ -251,7 +259,7 @@ func (s *Service) getDeviceIdentifierFromMount(mountPoint string) string {
 		s.logger.Debug("found device for mount point",
 			"device", devicePath, "mount_point", mountPoint)
 
-		out, err := exec.Command("blkid", "-s", "UUID", "-s", "SERIAL", "-o", "value", devicePath).Output()
+		out, err := exec.CommandContext(ctx, "blkid", "-s", "UUID", "-s", "SERIAL", "-o", "value", devicePath).Output()
 		if err != nil {
 			s.logger.Debug("failed to get device info with blkid",
 				"device", devicePath, "error", err)

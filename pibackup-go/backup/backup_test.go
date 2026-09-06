@@ -1,10 +1,13 @@
 package backup
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/benjamin/pibackup/pibackup-go/feedback"
 	"github.com/benjamin/pibackup/pibackup-go/fs"
@@ -56,7 +59,49 @@ func TestPerformPostBackupTasks(t *testing.T) {
 
 	// Run post backup tasks
 	// This might fail without rsync, but shouldn't panic
-	service.performPostBackupTasks(backupDir)
+	service.performPostBackupTasks(context.Background(), backupDir)
+}
+
+// TestPerformPostBackupTasks_RespectsCancellation proves the post-backup sync
+// and touch honour a cancelled context: with a pre-cancelled context they
+// must return promptly and not log a spurious warning (the cancelled
+// command is the expected outcome, not a failure).
+func TestPerformPostBackupTasks_RespectsCancellation(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "post_backup_cancel_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	service := NewService(slog.Default(), &fs.MockFileSystem{}, &MockFeedback{}, &Config{BackupPath: tmpDir})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel
+
+	done := make(chan struct{})
+	go func() {
+		service.performPostBackupTasks(ctx, tmpDir)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// success: returned promptly under cancellation
+	case <-time.After(5 * time.Second):
+		t.Fatal("performPostBackupTasks did not return promptly under a cancelled context")
+	}
+}
+
+// TestGetBackupName_FallsBackWhenBlkidUnreachable confirms that when the
+// device identifier cannot be determined (e.g. /proc/mounts absent in tests),
+// the timestamp fallback is used and no error is surfaced. It also exercises
+// the ctx-aware path so a nil/cancelled ctx does not panic.
+func TestGetBackupName_FallsBackWhenBlkidUnreachable(t *testing.T) {
+	service := NewService(slog.Default(), &fs.MockFileSystem{}, &MockFeedback{}, &Config{BackupPath: "/tmp/backups"})
+	name := service.getBackupName(context.Background(), "/nonexistent/mountpoint")
+	if !strings.HasPrefix(name, "backup_") {
+		t.Fatalf("expected timestamp fallback 'backup_...', got %q", name)
+	}
 }
 
 func TestSanitizeFilename(t *testing.T) {

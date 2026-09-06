@@ -218,11 +218,11 @@ func (s *Service) ProcessDevice(ctx context.Context, device string) error {
 
 	// Resolve the mount point, mounting if necessary. cleanup unmounts on the
 	// way out only when we performed the mount ourselves.
-	mountPoint, shouldUnmount, err := s.ensureMounted(deviceName)
+	mountPoint, shouldUnmount, err := s.ensureMounted(ctx, deviceName)
 	if err != nil {
 		return err
 	}
-	defer s.cleanupMount(mountPoint, shouldUnmount, deviceName)
+	defer s.cleanupMount(ctx, mountPoint, shouldUnmount, deviceName)
 
 	// Delegate the actual copy to the backup service.
 	if err := s.backupService.Run(ctx, mountPoint, devicePath, deviceName); err != nil {
@@ -265,8 +265,9 @@ func (s *Service) ProcessExistingDevices(ctx context.Context) {
 // ensureMounted returns the mount point for the device. If the device is
 // already mounted, the existing mount point is reused (and not unmounted by
 // us). Otherwise the first partition (or the whole device if it has none) is
-// mounted under s.mountPath and marked for unmount on cleanup.
-func (s *Service) ensureMounted(deviceName string) (mountPoint string, shouldUnmount bool, err error) {
+// mounted under s.mountPath and marked for unmount on cleanup. All mount
+// operations honour the provided context so shutdown can interrupt them.
+func (s *Service) ensureMounted(ctx context.Context, deviceName string) (mountPoint string, shouldUnmount bool, err error) {
 	if s.mountService.IsMounted(deviceName) {
 		existing := s.mountService.GetMountPoint(deviceName)
 		if existing == "" {
@@ -296,20 +297,21 @@ func (s *Service) ensureMounted(deviceName string) (mountPoint string, shouldUnm
 	}
 
 	s.notify(mountable, feedback.EventProgress, fmt.Sprintf("Mounting device: %s", mountable), 10)
-	if err := s.mountService.Mount(context.Background(), mountable, mountPoint); err != nil {
+	if err := s.mountService.Mount(ctx, mountable, mountPoint); err != nil {
 		return "", false, err
 	}
 	s.notify(mountable, feedback.EventProgress, fmt.Sprintf("Device mounted: %s", mountable), 20)
 	return mountPoint, true, nil
 }
 
-// cleanupMount unmounts a mount point we own and removes the directory.
-func (s *Service) cleanupMount(mountPoint string, shouldUnmount bool, deviceName string) {
+// cleanupMount unmounts a mount point we own and removes the directory. It
+// honours the provided context so shutdown can interrupt the unmount.
+func (s *Service) cleanupMount(ctx context.Context, mountPoint string, shouldUnmount bool, deviceName string) {
 	if !shouldUnmount {
 		return
 	}
 	s.notify(deviceName, feedback.EventProgress, fmt.Sprintf("Unmounting device: %s", deviceName), 90)
-	if err := s.mountService.Unmount(context.Background(), mountPoint); err != nil {
+	if err := s.mountService.Unmount(ctx, mountPoint); err != nil {
 		s.logger.Error("unmount failed", "mount_point", mountPoint, "error", err)
 	}
 	s.fs.Remove(mountPoint)

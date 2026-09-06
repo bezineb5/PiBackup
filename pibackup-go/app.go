@@ -272,22 +272,14 @@ func (app *App) handleTouchEvent(event feedback.TouchEventType) {
 		app.deviceService.ProcessExistingDevices(app.ctx)
 	case feedback.TouchShutdown:
 		app.logger.Info("shutdown triggered via touch")
-		// Refuse to power off while a backup is in flight; mid-rsync shutdown
-		// could leave a partial backup on disk and risk the source card.
-		if !app.mu.TryLock() {
-			app.logger.Warn("shutdown deferred: backup in progress")
-			if app.config.Feedback != nil {
-				app.config.Feedback.Notify(feedback.Event{
-					Type:      feedback.EventWarning,
-					Message:   "Shutdown deferred: backup in progress",
-					Timestamp: time.Now(),
-				})
-			}
-			return
-		}
-		app.mu.Unlock()
+		// Cancel the app context first. This interrupts any in-flight backup:
+		// the rsync (run via exec.CommandContext), the mount/unmount, and the
+		// post-backup sync all observe this context and abort. This is what
+		// makes the power button actually responsive during a backup.
+		app.cancel()
+		// Stop the WebDAV server and halt feedback cleanly.
 		app.cleanup()
-		// Actually shut down the machine
+		// Actually shut down the machine.
 		if err := exec.Command("shutdown", "now").Start(); err != nil {
 			app.logger.Error("failed to execute shutdown command", "error", err)
 		}
