@@ -51,7 +51,7 @@ Features:
 	rootCmd.PersistentFlags().StringVarP(&backupPath, "backup-path", "b", "", "backup directory path")
 	rootCmd.PersistentFlags().StringVarP(&logLevel, "log-level", "l", "", "logging level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().StringVarP(&webdavPort, "webdav-port", "p", "", "WebDAV server port")
-	rootCmd.PersistentFlags().StringVarP(&feedbackType, "feedback", "f", "", "feedback type (cap1166, console, log, none)")
+	rootCmd.PersistentFlags().StringVarP(&feedbackType, "feedback", "f", "", "feedback type (touchphat, console, log, none)")
 
 	// Bind flags to viper
 	viper.BindPFlag("backup.path", rootCmd.PersistentFlags().Lookup("backup-path"))

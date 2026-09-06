@@ -2,29 +2,41 @@
 
 A simple, lightweight photo backup tool for Raspberry Pi written in Go.
 
+It is designed for a compact travel backup box: plug in a camera SD card and
+the contents are copied to the Pi's backup disk. The top priority is **never
+corrupting the source card** — it is mounted read-only and never written to.
+
 ## Features
 
-- **Simple**: Single binary, no dependencies
-- **Lightweight**: ~5MB binary vs complex Python setup
-- **Reliable**: Direct device detection and mounting
-- **Fast**: Efficient file copying with rsync
-- **Event-driven**: Uses fsnotify to watch for device changes (no polling)
-- **Robust logging**: Automatic log rotation with structured events
-- **Unique ID generation**: Creates and stores unique IDs on devices for consistent naming
-- **Permission preservation**: Maintains file permissions during backup
-- **Data safety**: Flushes disk buffers to ensure data is written
-- **Parallel operation prevention**: Prevents multiple backups running simultaneously
-- **Clean user feedback**: Abstract event-based feedback system
-- **WebDAV server**: Remote access to backup content via iOS Files app
+- **Source-safety first**: source cards are mounted read-only (`ro`) with
+  `noatime`; the application never writes to the card (not even for naming).
+- **Single binary**: no Python/venv/pip, just copy and run.
+- **Event-driven detection**: kernel uevents via netlink (no polling), with an
+  fsnotify fallback; a short retry loop waits for freshly-appeared devices to
+  settle instead of a fixed sleep.
+- **Fast**: efficient file copying with rsync.
+- **Robust logging**: structured `slog` JSON with automatic rotation.
+- **Stable backup names**: a Pi-side registry maps each device (by its blkid
+  UUID/serial) to a consistent name across insertions, without touching the card.
+- **Permission preservation**: rsync normalises on-disk permissions of the copies.
+- **Data safety**: disk buffers are flushed after each backup; all long-running
+  operations honour a context, so shutdown interrupts an in-flight backup.
+- **Parallel operation prevention**: a mutex prevents multiple backups at once;
+  a manual-scan debounce collapses repeated button presses.
+- **Clean user feedback**: abstract event-based feedback system.
+- **WebDAV server**: remote read-only access to backup content (iOS Files app).
 
 ## What it does
 
-1. **Watches** for USB storage devices being plugged in (using fsnotify)
-2. **Automatically mounts** them when detected
-3. **Runs rsync** to copy photos to `/share`
-4. **Unmounts** when done
-5. **Processes existing devices** on startup
-6. **Logs everything** with automatic rotation
+1. **Detects** USB / removable storage via kernel uevents (primary) or fsnotify
+   on `/dev` (fallback).
+2. **Waits for the device to settle** by polling its sysfs attributes (USB
+   subsystem link, removable flag, medium size) with backoff — no fixed sleep.
+3. **Mounts read-only** (`ro,noatime`) — the card is never written to.
+4. **Runs rsync** to copy the card's contents to `/share/<name>`.
+5. **Flushes** the destination disk (`sync`) and unmounts the card.
+6. **Processes** any devices already connected at startup.
+7. **Logs everything** with automatic rotation.
 
 ## Build
 
@@ -32,7 +44,13 @@ A simple, lightweight photo backup tool for Raspberry Pi written in Go.
 make build
 ```
 
-This creates a `pibackup-go` binary for ARM (Raspberry Pi).
+This creates a `pibackup-go` binary for ARM (Raspberry Pi, ARMv6).
+
+To build for a 64-bit Pi:
+
+```bash
+GOOS=linux GOARCH=arm64 go build -o pibackup-go .
+```
 
 ## Install
 
@@ -60,9 +78,9 @@ This creates a `pibackup-go` binary for ARM (Raspberry Pi).
 
 Just plug in a memory card or USB drive. The service will:
 
-- **Instantly detect** the device (no polling delay)
-- Mount it automatically
-- Copy all files to `/share/[backup-name]`
+- Detect the device (no polling delay)
+- Wait for it to settle, then mount it **read-only**
+- Copy all files to `/share/<backup-name>`
 - Unmount when done
 - Log all activities with timestamps
 
@@ -90,7 +108,7 @@ The application supports command-line flags for configuration overrides:
 - `-b, --backup-path string` - Backup directory path
 - `-l, --log-level string` - Logging level (debug, info, warn, error)
 - `-p, --webdav-port string` - WebDAV server port
-- `-f, --feedback string` - Feedback type (cap1166, console, log, none)
+- `-f, --feedback string` - Feedback type (touchphat, console, log, none)
 
 #### Configuration Priority
 
@@ -99,9 +117,10 @@ The application supports command-line flags for configuration overrides:
 3. **Config file** (config.yaml)
 4. **Default values** (lowest priority)
 
-### Skip Backup
+### Skipping a backup
 
-To skip backup of a specific device, create a `.backupignore` file at the root of the device:
+To skip backup of a specific device, create a `.backupignore` file at the root
+of the device:
 
 ```bash
 # On the device root directory
@@ -109,11 +128,22 @@ touch .backupignore
 ```
 
 The application will detect this file and skip the backup, logging the reason.
+This is a read of the source only; the card is never written.
 
 ### Backup naming
 
-- If `unique.id` file exists on the device, uses that name
-- Otherwise uses timestamp: `backup_20240729_143022`
+Names are resolved **without writing to the card**, in this order:
+
+1. If a `unique.id` file already exists on the card, its value is used
+   (read-only; kept for backward compatibility with cards stamped by older
+   builds).
+2. Otherwise the card's stable identifier (its blkid UUID or serial) is looked
+   up in a **Pi-side registry** stored at `<backup-path>/.device-names.json`.
+   On first sight, a fresh 6-character ID is minted and stored there.
+3. Fallback: a timestamp, `backup_20240729_143022` (used when no stable
+   identifier can be determined — e.g. a device with no blkid UUID/serial).
+
+The registry lives on the destination disk, never on the source card.
 
 ## Logging
 
@@ -121,30 +151,27 @@ The application uses structured logging with automatic rotation:
 
 ### Log Location
 - **Log files**: `/share/logs/pibackup.log`
-- **Rotation**: 10MB per file, 5 backup files, 30 days retention
+- **Rotation**: 10MB per file, 20 backup files, 120 days retention
 - **Compression**: Old log files are automatically compressed
-- **Format**: JSON structured logging (slog)
+- **Format**: JSON to the log file; human-readable text to the console
 
-### Log Format
+### Log Format (file)
 ```json
 {"time":"2024-07-29T14:30:22.123Z","level":"INFO","msg":"application started","version":"1.0.0","source":"main.go:45"}
-{"time":"2024-07-29T14:30:22.124Z","level":"INFO","msg":"watcher started","path":"/sys/block","source":"main.go:67"}
-{"time":"2024-07-29T14:30:25.456Z","level":"INFO","msg":"device detected","device":"/dev/sda","event":"create","source":"main.go:89"}
-{"time":"2024-07-29T14:30:27.789Z","level":"INFO","msg":"USB storage device detected","device":"/dev/sda","source":"main.go:95"}
-{"time":"2024-07-29T14:30:27.790Z","level":"INFO","msg":"backup started","device":"/dev/sda","source":"main.go:98"}
-{"time":"2024-07-29T14:30:28.123Z","level":"INFO","msg":"device mounted successfully","device":"/dev/sda","mount_point":"/media/sda","source":"main.go:115"}
-{"time":"2024-07-29T14:30:45.456Z","level":"INFO","msg":"backup completed successfully","device":"/dev/sda","destination":"/share/backup_20240729_143022","duration_seconds":18.5,"source":"main.go:145"}
+{"time":"2024-07-29T14:30:22.124Z","level":"INFO","msg":"uevent monitor started","source":"app.go:138"}
+{"time":"2024-07-29T14:30:25.456Z","level":"INFO","msg":"uevent: device added","device":"/dev/sda","source":"app.go:178"}
+{"time":"2024-07-29T14:30:27.789Z","level":"INFO","msg":"device mounted successfully","device":"sda","mount_point":"/media/sda1","read_only":true,"source":"mount/mount.go:159"}
+{"time":"2024-07-29T14:30:45.456Z","level":"INFO","msg":"backup completed successfully","device":"/dev/sda1","destination":"/share/ABC123","duration_seconds":18.5,"source":"backup/backup.go:97"}
 ```
 
 ### Key Events
 - `application started` - Application startup with version
-- `device detected` - New device found
-- `USB storage device detected` - USB storage device confirmed
-- `backup started` - Backup process started
-- `device mounted successfully` - Device mounted successfully
+- `uevent: device added` - Kernel uevent for a new block device
+- `device did not become ready in time` - Readiness polling exhausted
+- `device mounted successfully` - Device mounted (read-only, noatime)
 - `backup completed successfully` - Backup completed with duration
+- `registered new device name` - A device was seen for the first time and named in the Pi-side registry
 - `shutting down` - Application shutdown
-- `generated and stored unique ID` - Unique ID created and stored on device
 - `backup already in progress` - Parallel operation prevented
 
 ### Benefits of slog
@@ -156,12 +183,14 @@ The application uses structured logging with automatic rotation:
 
 ## User Feedback
 
-The application uses a clean, abstract feedback system based on events:
+The application uses an abstract feedback system based on events. A feedback
+sink is anything that implements the `Feedback` interface; the core logic never
+touches hardware directly.
 
 ### Core Concept
 
 ```go
-type UserFeedback interface {
+type Feedback interface {
     Notify(event Event)
     Halt() error
 }
@@ -184,92 +213,30 @@ type Event struct {
 - **EventError** - Error conditions
 - **EventWarning** - Warning messages
 
-### Example Implementations
+### Built-in Implementations
 
-#### Console Output
-```go
-type ConsoleFeedback struct{}
+- **`touchphat`** (default) - Pimoroni Touch pHAT / CAP1166 capacitive touch
+  sensor via periph.io. Falls back to no feedback if the hardware is absent
+  (e.g. running on a Pi without the HAT). Also exposes touch events that can
+  trigger a manual backup or a graceful shutdown (see Touch input).
+- **`console`** - Human-readable lines to stdout.
+- **`log`** - Structured events into the `slog` logger.
+- **`none`** - No feedback.
 
-func (c *ConsoleFeedback) Notify(event Event) {
-    timestamp := event.Timestamp.Format("15:04:05")
-    fmt.Printf("[%s] %s: %s\n", timestamp, event.Type, event.Message)
-}
-```
+### Touch input
 
-#### Structured Logging
-```go
-type LogFeedback struct {
-    logger *slog.Logger
-}
+When the `touchphat` feedback is active, two touch buttons are wired:
 
-func (l *LogFeedback) Notify(event Event) {
-    l.logger.Info("user feedback",
-        "type", event.Type,
-        "message", event.Message,
-        "device", event.Device,
-        "progress", event.Progress,
-    )
-}
-```
-
-#### Web Interface
-```go
-type WebFeedback struct {
-    clients map[chan Event]bool
-}
-
-func (w *WebFeedback) Notify(event Event) {
-    // Send event to all connected web clients
-    for client := range w.clients {
-        select {
-        case client <- event:
-        default:
-            // Client not reading, remove it
-        }
-    }
-}
-```
-
-#### CAP1166 Hardware Interface
-```go
-// Using periph.io for CAP1166 capacitive touch sensor
-feedback, err := NewCAP1166Feedback()
-if err != nil {
-    log.Fatal(err)
-}
-```
-
-### Usage
-
-```go
-// No feedback (default)
-config := &Config{
-    Feedback: nil,
-}
-
-// Console feedback
-config := &Config{
-    Feedback: &ConsoleFeedback{},
-}
-
-// CAP1166 hardware feedback
-feedback, err := NewCAP1166Feedback()
-if err != nil {
-    log.Fatal(err)
-}
-config := &Config{
-    Feedback: feedback,
-}
-
-// Custom feedback implementation
-config := &Config{
-    Feedback: &MyCustomFeedback{},
-}
-```
+- **Manual backup** triggers a scan of all connected devices. Repeated presses
+  while a scan is running are debounced (collapsed into the in-flight scan).
+- **Shutdown** cancels the application context (interrupting any in-flight
+  backup — rsync, mount, and sync all abort), then runs `shutdown now`. This
+  makes the power button responsive even during a backup.
 
 ## Configuration
 
-The application uses Viper for flexible configuration management with multiple sources:
+The application uses Viper for flexible configuration management with multiple
+sources.
 
 ### Configuration Sources (in order of priority)
 
@@ -285,7 +252,8 @@ Create a `config.yaml` file in one of these locations:
 - `$HOME/.pibackup/config.yaml` (user-specific)
 - `./config.yaml` (current directory)
 
-Example configuration:
+Example configuration with defaults shown:
+
 ```yaml
 backup:
   path: "/share"
@@ -295,9 +263,9 @@ backup:
 logging:
   level: "info"
   path: "/share/logs"
-  max_size: 10
+  max_size: 10        # MB per file
   max_backups: 20
-  max_age: 120
+  max_age: 120        # days
   compress: true
 
 webdav:
@@ -306,8 +274,11 @@ webdav:
   username: ""
   password: ""
 
+mount:
+  readonly: true      # mount source cards read-only (default; do not disable)
+
 feedback:
-  type: "cap1166"
+  type: "touchphat"
   led_brightness: 50
 ```
 
@@ -316,36 +287,48 @@ feedback:
 All configuration values can be overridden with environment variables:
 
 ```bash
-# CAP1166 hardware feedback (default)
-export PIBACKUP_FEEDBACK="cap1166"
+# Feedback
+export PIBACKUP_FEEDBACK="touchphat"   # touchphat | console | log | none
 
-# Console output feedback
-export PIBACKUP_FEEDBACK="console"
+# Mount
+export PIBACKUP_MOUNT_READONLY="true"  # keep source cards read-only
 
-# Structured logging feedback
-export PIBACKUP_FEEDBACK="log"
+# WebDAV
+export PIBACKUP_WEBDAV_ENABLED="true"
+export PIBACKUP_WEBDAV_PORT="80"
 
-# No feedback
-export PIBACKUP_FEEDBACK="none"
+# Backup
+export PIBACKUP_BACKUP_PATH="/share"
 ```
 
 ### Default Behavior
 
-- **CAP1166 is the default** - If no environment variable is set, the application will attempt to use CAP1166 hardware feedback
-- **Graceful fallback** - If CAP1166 initialization fails, the application falls back to no feedback and continues running
-- **Unknown types** - If an unknown feedback type is specified, it falls back to CAP1166
+- **`mount.readonly` defaults to `true`** — source cards are mounted read-only.
+  This is the core source-safety guarantee. Only disable it if you have a
+  specific reason to write to a source.
+- **`feedback.type` defaults to `touchphat`** — if the hardware is missing,
+  the app falls back to no feedback and continues running.
+- **`webdav.enabled` defaults to `true`** — see the WebDAV section for
+  security considerations on untrusted networks.
 
 ## WebDAV Remote Access
 
-The application includes a built-in WebDAV server for remote access to backup content from iOS devices.
+The application includes a built-in WebDAV server for remote access to backup
+content from iOS devices.
+
+> **Security note**: the default is unauthenticated, read-only access on port
+> 80, exposed to whatever network the Pi is joined to. On hotel/cafe Wi-Fi this
+> means anyone on the LAN can browse your backups. Set `webdav.username` /
+> `webdav.password`, bind to a trusted interface, or set `webdav.enabled:
+> false` when on untrusted networks. (Hardening the default is tracked as
+> future work.)
 
 ### Features
 
-- **Read-only access** - Safe exploration of backup content
+- **Read-only access** - No write operations allowed
 - **iOS Files app integration** - Native support without additional apps
-- **Auto-discovery** - Automatically shows available backups
+- **Path traversal protection** - Source paths are validated
 - **CORS support** - Works with web browsers
-- **Security** - Path traversal protection and write operation blocking
 
 ### Configuration
 
@@ -365,7 +348,7 @@ export PIBACKUP_BACKUP_PATH="/share"
 1. **Open Files app** on your iPhone/iPad
 2. **Tap "Browse"** → **"..."** → **"Connect to Server"**
 3. **Enter server address**: `http://192.168.1.100`
-4. **Tap "Connect"** - no username/password required
+4. **Tap "Connect"** - no username/password required by default
 5. **Browse backups** - each backup appears as a folder
 
 ### API Endpoints
@@ -387,53 +370,63 @@ curl http://192.168.1.100/backups
 # http://192.168.1.100/ABC123/
 ```
 
-### Security Features
-
-- **Read-only access** - No write operations allowed
-- **Path validation** - Prevents directory traversal attacks
-- **CORS headers** - Safe for web browser access
-- **Error logging** - All access attempts logged
-
 ## How it works
 
-- **Event-driven**: Uses `fsnotify` to watch `/sys/block` for device changes
-- **Instant detection**: No 5-second polling delay
-- **Concurrent processing**: Each device is processed in its own goroutine
-- **Graceful shutdown**: Handles SIGINT/SIGTERM properly
-- **Structured logging**: All events logged with context and timing
-- **Parallel prevention**: Mutex prevents multiple backups running simultaneously
-- **Data safety**: Disk buffers flushed after each backup
-- **Clean feedback**: Event-based user notification system
-- **WebDAV server**: Remote access to backup content via iOS Files app
+- **Detection**: kernel uevents via a netlink socket (primary), falling back to
+  fsnotify on `/dev` if the netlink monitor can't start.
+- **Settling**: a short retry loop polls the device's sysfs attributes (USB
+  subsystem link, removable flag, medium size) with exponential backoff, rather
+  than a fixed sleep.
+- **Mounting**: source devices are mounted `ro,noatime` via the mount service —
+  the single place that owns `mount`/`umount`/`sync`.
+- **Copy**: rsync copies the card's contents into the backup directory; the
+  directory is stable per device, so a re-insertion resumes and completes an
+  interrupted backup in place.
+- **Concurrency**: a mutex prevents multiple backups running at once; a
+  separate mutex debounces manual scans.
+- **Cancellation**: all long-running operations (rsync, mount, umount, sync,
+  blkid) honour the application context. SIGINT/SIGTERM and the shutdown touch
+  button cancel it, so an in-flight backup is interrupted promptly.
+- **Graceful shutdown**: SIGINT/SIGTERM stop the WebDAV server, halt feedback,
+  and cancel the context.
 
 ## Backup naming
 
-- If `unique.id` file exists on the device, uses that name
-- If no `unique.id` exists, generates a random 6-character ID (e.g., "ABC123") and stores it
-- Falls back to timestamp: `backup_20240729_143022` if ID storage fails
+Names are stable per device and computed without writing to the card:
+
+1. An existing `unique.id` on the card (read-only, backward compat).
+2. The Pi-side registry keyed by the card's blkid UUID/serial
+   (`<backup-path>/.device-names.json`); minted on first sight.
+3. Timestamp fallback `backup_YYYYMMDD_HHMMSS` when no stable identifier exists.
 
 ## Advanced features
 
-### Unique ID Generation
-The application automatically generates unique 6-character IDs (e.g., "ABC123") and stores them in a `unique.id` file on the device. This ensures consistent backup naming across multiple insertions of the same device.
+### Pi-side device name registry
+Each device is identified by its stable blkid UUID or serial. On first sight a
+random 6-character ID is minted and stored in `<backup-path>/.device-names.json`
+on the **destination disk**, mapping that identifier to a friendly name. The
+same card re-inserted later resolves to the same backup folder. The card
+itself is never written.
 
 ### Permission Preservation
-Rsync is configured with `--chmod=Du=rwx,Dgo=rwx,Fu=rw,Fog=rw` to preserve file permissions and ensure proper access rights on the backup.
+rsync is configured with `--chmod=Du=rwx,Dgo=rwx,Fu=rw,Fog=rw` to normalise the
+permissions of the backup copies for easy access on the Pi.
 
 ### Data Safety
-After each backup, the application:
-- Flushes disk buffers with `sync` command
-- Updates destination directory timestamp
-- Ensures all data is safely written to disk
+After each backup, the application flushes the destination disk buffers with
+`sync` and refreshes the backup directory timestamp. The pre-unmount `sync`
+ensures the card's read-only mount can be cleanly unmounted.
 
 ### Parallel Operation Prevention
-A mutex prevents multiple backup operations from running simultaneously, preventing conflicts and resource contention.
+A mutex prevents multiple backup operations from running simultaneously. A
+separate mutex debounces the manual-scan touch button so holding it cannot
+launch overlapping scans.
 
 ### Clean Feedback Abstraction
-The event-based feedback system provides:
-- **Separation of concerns** - Core logic separate from UI
+The event-based feedback system keeps core logic separate from any UI/hardware:
+- **Separation of concerns** - Core logic separate from feedback hardware
 - **Flexibility** - Easy to implement new feedback methods
-- **Simplicity** - Single method interface
+- **Simplicity** - Single `Notify` method
 - **Extensibility** - Add new event types as needed
 
 ## Service management
@@ -464,7 +457,7 @@ sudo systemctl stop pibackup-go.service
 - **Cross-platform**: Easy to build for different architectures
 - **Event-driven**: Real-time device detection
 - **Robust logging**: Built-in rotation and structured events
-- **Production ready**: Proper error handling and data safety
+- **Source-safe**: Read-only mounts, no card writes, context-based interruption
 - **Clean abstractions**: Simple, focused interfaces
 
 ## Comparison
@@ -472,16 +465,31 @@ sudo systemctl stop pibackup-go.service
 | Feature | Python Version | Go Version |
 |---------|---------------|------------|
 | Binary size | ~50MB (with deps) | ~5MB |
-| Dependencies | Python, venv, pip, many packages | fsnotify + lumberjack |
+| Dependencies | Python, venv, pip, many packages | fsnotify + lumberjack + go-udev |
 | Setup complexity | High (venv, service, dependencies) | Low (just copy binary) |
 | Features | Full (hotspot, gallery, buttons) | Core backup features |
 | Maintenance | High | Low |
-| Device detection | Polling (5s delay) | Event-driven (instant) |
+| Device detection | Polling (5s delay) | Event-driven (uevent + fsnotify fallback) |
 | Logging | Basic | Structured + rotation |
-| Unique IDs | Yes | Yes |
+| Source safety | — | Read-only mounts, no card writes |
+| Backup naming | unique.id on device | Pi-side registry by UUID/serial (card untouched) |
 | Permission preservation | Yes | Yes |
 | Data safety | Yes | Yes |
-| Parallel prevention | Yes | Yes |
-| User feedback | Physical buttons only | Abstract event system |
+| Parallel prevention | Yes | Yes (+ manual-scan debounce) |
+| Cancellation | — | Context-based; shutdown interrupts in-flight backup |
+| User feedback | Physical buttons only | Abstract event system (touchphat/console/log/none) |
 
-Perfect for a robust backup solution!
+## Safety design (summary)
+
+The single most important property is that the camera SD card is never
+corrupted. This is enforced at multiple layers:
+
+1. **Read-only mount by default** (`mount.readonly = true`): the filesystem
+   layer cannot write to the card.
+2. **No application writes to the source**: naming is done via a Pi-side
+   registry; an existing `unique.id` is only ever read.
+3. **`noatime`** on every mount: reading the card doesn't update access times
+   (no metadata writes).
+4. **`sync` before unmount**: the read-only mount is cleanly released.
+5. **Context-based interruption**: shutdown never leaves a mount dangling; an
+   interrupted backup is resumed and completed on the next insertion.
