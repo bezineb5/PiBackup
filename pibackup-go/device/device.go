@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -154,7 +155,7 @@ func (s *Service) FindUSBDevices() []string {
 		if s.IsUSBStorage(deviceName) {
 			s.logger.Info("found USB device", "device", deviceName)
 			devices = append(devices, deviceName)
-			for _, partition := range s.findPartitions(deviceName) {
+			for _, partition := range s.partitions(deviceName) {
 				s.logger.Info("found partition", "partition", partition, "parent", deviceName)
 				devices = append(devices, partition)
 			}
@@ -165,27 +166,32 @@ func (s *Service) FindUSBDevices() []string {
 	return devices
 }
 
-// findPartitions returns the partition names for a whole-disk device.
-func (s *Service) findPartitions(deviceName string) []string {
-	var partitions []string
-
+// partitions returns the partition names of a whole-disk device by walking
+// /sys/block/<deviceName>. A partition is any subdirectory whose name is the
+// device name followed by digits (e.g. "sda" -> ["sda1","sda2"]). The result
+// is sorted for stable ordering. This is the single helper for partition
+// discovery; hasPartitions/getFirstPartition callers derive from it.
+func (s *Service) partitions(deviceName string) []string {
 	blockPath := filepath.Join("/sys/block", deviceName)
 	entries, err := s.fs.ReadDir(blockPath)
 	if err != nil {
-		s.logger.Debug("could not read block device directory", "path", blockPath, "error", err)
-		return partitions
+		s.logger.Debug("could not read block device directory",
+			"path", blockPath, "error", err)
+		return nil
 	}
 
+	var parts []string
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 		name := entry.Name()
 		if len(name) > len(deviceName) && isAllDigits(name[len(deviceName):]) {
-			partitions = append(partitions, name)
+			parts = append(parts, name)
 		}
 	}
-	return partitions
+	sort.Strings(parts)
+	return parts
 }
 
 // ProcessDevice handles a single device end-to-end: it ensures the device has
@@ -281,7 +287,7 @@ func (s *Service) ensureMounted(ctx context.Context, deviceName string) (mountPo
 
 	// Prefer the first partition over the whole disk for mounting.
 	mountable := deviceName
-	if partition := s.getFirstPartition(deviceName); partition != "" {
+	if partition := s.firstPartition(deviceName); partition != "" {
 		mountable = partition
 		s.logger.Info("mounting partition instead of whole disk", "partition", partition, "device", deviceName)
 	}
@@ -317,43 +323,20 @@ func (s *Service) cleanupMount(ctx context.Context, mountPoint string, shouldUnm
 	s.fs.Remove(mountPoint)
 }
 
-// hasPartitions reports whether the whole-disk device has partition entries.
+// hasPartitions reports whether the whole-disk device has any partition
+// entries. It is a thin predicate over partitions.
 func (s *Service) hasPartitions(deviceName string) bool {
-	blockPath := filepath.Join("/sys/block", deviceName)
-	entries, err := s.fs.ReadDir(blockPath)
-	if err != nil {
-		s.logger.Debug("could not read block device directory", "path", blockPath, "error", err)
-		return false
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if len(name) > len(deviceName) && isAllDigits(name[len(deviceName):]) {
-			return true
-		}
-	}
-	return false
+	return len(s.partitions(deviceName)) > 0
 }
 
-// getFirstPartition returns the first partition name of a device, or "".
-func (s *Service) getFirstPartition(deviceName string) string {
-	blockPath := filepath.Join("/sys/block", deviceName)
-	entries, err := s.fs.ReadDir(blockPath)
-	if err != nil {
+// firstPartition returns the first (lowest-numbered) partition name of a
+// device, or "" if it has none. It is a thin accessor over partitions.
+func (s *Service) firstPartition(deviceName string) string {
+	parts := s.partitions(deviceName)
+	if len(parts) == 0 {
 		return ""
 	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if len(name) > len(deviceName) && isAllDigits(name[len(deviceName):]) {
-			return name
-		}
-	}
-	return ""
+	return parts[0]
 }
 
 // hasMedium reports whether the device has a storage medium with non-zero size.
