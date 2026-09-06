@@ -137,8 +137,6 @@ func runApp(cmd *cobra.Command, args []string) error {
 		watcher,
 		ueventMonitor,
 		deviceService,
-		mountService,
-		backupService,
 		realFS,
 	)
 

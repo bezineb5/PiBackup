@@ -13,12 +13,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/benjamin/pibackup/pibackup-go/backup"
 	"github.com/benjamin/pibackup/pibackup-go/config"
 	"github.com/benjamin/pibackup/pibackup-go/device"
 	"github.com/benjamin/pibackup/pibackup-go/feedback"
 	"github.com/benjamin/pibackup/pibackup-go/fs"
-	"github.com/benjamin/pibackup/pibackup-go/mount"
 	"github.com/benjamin/pibackup/pibackup-go/uevent"
 	"github.com/fsnotify/fsnotify"
 )
@@ -36,8 +34,6 @@ type App struct {
 	watcher       *fsnotify.Watcher
 	ueventMonitor *uevent.Monitor
 	deviceService *device.Service
-	mountService  *mount.Service
-	backupService *backup.Service
 	fs            fs.FileSystem
 }
 
@@ -48,8 +44,6 @@ func NewApp(
 	watcher *fsnotify.Watcher,
 	ueventMonitor *uevent.Monitor,
 	deviceService *device.Service,
-	mountService *mount.Service,
-	backupService *backup.Service,
 	fs fs.FileSystem,
 ) *App {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -58,11 +52,9 @@ func NewApp(
 		logger:        logger,
 		ctx:           ctx,
 		cancel:        cancel,
-		watcher:       watcher,
+		watcher:        watcher,
 		ueventMonitor: ueventMonitor,
 		deviceService: deviceService,
-		mountService:  mountService,
-		backupService: backupService,
 		fs:            fs,
 	}
 }
