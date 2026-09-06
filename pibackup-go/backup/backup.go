@@ -86,9 +86,7 @@ func (s *Service) Run(ctx context.Context, mountPoint, device, deviceName string
 	s.logger.Info("preparing backup", "device", device, "source", mountPoint, "destination", backupDir)
 	s.notify(deviceName, feedback.EventProgress, fmt.Sprintf("Backing up: %s", deviceName), 30)
 
-	sourcePath := s.getRsyncSourcePath(mountPoint, deviceName)
-
-	if err := s.runRsync(ctx, sourcePath, backupDir, device, deviceName); err != nil {
+	if err := s.runRsync(ctx, mountPoint, backupDir, device, deviceName); err != nil {
 		return err
 	}
 
@@ -274,26 +272,6 @@ func (s *Service) getDeviceIdentifierFromMount(ctx context.Context, mountPoint s
 		return s.sanitizeFilename(devicePath)
 	}
 	return ""
-}
-
-// getRsyncSourcePath returns the optimal rsync source path. If the mount point
-// contains a single top-level directory matching the device name, that
-// directory is used to avoid an extra nesting level in the backup.
-func (s *Service) getRsyncSourcePath(mountPoint, deviceName string) string {
-	entries, err := s.fs.ReadDir(mountPoint)
-	if err != nil {
-		s.logger.Debug("could not read mount point directory",
-			"mount_point", mountPoint, "error", err)
-		return mountPoint
-	}
-	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() == deviceName {
-			s.logger.Info("using device directory as source to avoid extra level",
-				"dir", entry.Name())
-			return filepath.Join(mountPoint, deviceName)
-		}
-	}
-	return mountPoint
 }
 
 // sanitizeFilename makes a string safe for use as a filename.
