@@ -27,7 +27,8 @@ type App struct {
 	logger    *slog.Logger
 	ctx       context.Context
 	cancel    context.CancelFunc
-	mu        sync.Mutex // Prevents parallel operations
+	mu        sync.Mutex // Prevents parallel device processing
+	scanMu    sync.Mutex // Prevents overlapping manual scans
 	webdavSrv *WebDAVServer
 
 	// Injected dependencies
@@ -57,6 +58,17 @@ func NewApp(
 		deviceService: deviceService,
 		fs:            fs,
 	}
+}
+
+// ueventEvents returns the uevent monitor's event channel, or nil if no
+// monitor is available (e.g. on non-Linux platforms or when initialisation
+// failed). A nil channel blocks forever in a select, so this guard keeps
+// Run() safe without a special-case branch.
+func (app *App) ueventEvents() <-chan uevent.Event {
+	if app.ueventMonitor == nil {
+		return nil
+	}
+	return app.ueventMonitor.Events
 }
 
 // cleanup performs consistent shutdown cleanup
@@ -152,7 +164,7 @@ func (app *App) Run() error {
 	// Watch for new devices
 	for {
 		select {
-		case uevent := <-app.ueventMonitor.Events:
+		case uevent := <-app.ueventEvents():
 			// Handle kernel uevent (primary)
 			switch uevent.Action {
 			case "add":
@@ -215,22 +227,12 @@ func (app *App) handleDeviceEvent(event fsnotify.Event) {
 		})
 	}
 
-	// Give the device a moment to initialize
-	time.Sleep(2 * time.Second)
-
-	if app.deviceService.IsUSBStorage(deviceName) {
-		app.logger.Info("USB storage device detected", "device", devicePath)
-		if app.config.Feedback != nil {
-			app.config.Feedback.Notify(feedback.Event{
-				Type:      feedback.EventStatus,
-				Message:   fmt.Sprintf("USB storage detected: %s", deviceName),
-				Device:    deviceName,
-				Timestamp: time.Now(),
-			})
-		}
-		go app.processDevice(devicePath)
-	} else {
-		app.logger.Info("device skipped", "device", devicePath, "reason", "not_usb_storage")
+	// Wait for the device to settle: poll its sysfs attributes (USB subsystem,
+	// removable flag, medium size) until they are populated, instead of a
+	// fixed blind sleep. This mirrors what the uevent path effectively gets
+	// for free from the kernel.
+	if !app.deviceService.WaitForReady(app.ctx, deviceName) {
+		app.logger.Info("device skipped", "device", devicePath, "reason", "not_ready_or_not_usb_storage")
 		if app.config.Feedback != nil {
 			app.config.Feedback.Notify(feedback.Event{
 				Type:      feedback.EventStatus,
@@ -239,7 +241,19 @@ func (app *App) handleDeviceEvent(event fsnotify.Event) {
 				Timestamp: time.Now(),
 			})
 		}
+		return
 	}
+
+	app.logger.Info("USB storage device detected", "device", devicePath)
+	if app.config.Feedback != nil {
+		app.config.Feedback.Notify(feedback.Event{
+			Type:      feedback.EventStatus,
+				Message:   fmt.Sprintf("USB storage detected: %s", deviceName),
+				Device:    deviceName,
+				Timestamp: time.Now(),
+			})
+	}
+	go app.processDevice(devicePath)
 }
 
 // handleTouchEvent processes touch events from CAP1166
@@ -247,10 +261,31 @@ func (app *App) handleTouchEvent(event feedback.TouchEventType) {
 	switch event {
 	case feedback.TouchManualBackup:
 		app.logger.Info("manual backup triggered via touch")
-		// Trigger backup of all connected devices
+		// Debounce: a manual scan reuses the per-device TryLock inside
+		// ProcessDevice, but the scan itself can overlap if the button is
+		// held. A non-blocking lock collapses repeated triggers into one scan.
+		if !app.scanMu.TryLock() {
+			app.logger.Info("scan already in progress, ignoring manual trigger")
+			return
+		}
+		defer app.scanMu.Unlock()
 		app.deviceService.ProcessExistingDevices(app.ctx)
 	case feedback.TouchShutdown:
 		app.logger.Info("shutdown triggered via touch")
+		// Refuse to power off while a backup is in flight; mid-rsync shutdown
+		// could leave a partial backup on disk and risk the source card.
+		if !app.mu.TryLock() {
+			app.logger.Warn("shutdown deferred: backup in progress")
+			if app.config.Feedback != nil {
+				app.config.Feedback.Notify(feedback.Event{
+					Type:      feedback.EventWarning,
+					Message:   "Shutdown deferred: backup in progress",
+					Timestamp: time.Now(),
+				})
+			}
+			return
+		}
+		app.mu.Unlock()
 		app.cleanup()
 		// Actually shut down the machine
 		if err := exec.Command("shutdown", "now").Start(); err != nil {

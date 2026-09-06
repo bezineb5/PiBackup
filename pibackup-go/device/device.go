@@ -59,6 +59,64 @@ func NewService(
 	}
 }
 
+// readyRetryAttempts is how many times WaitForReady polls the device's sysfs
+// attributes before giving up. It is a var (not a const) so tests can
+// shorten the retry budget.
+var readyRetryAttempts = 10
+
+// readyRetryInterval is the initial delay between readiness polls, doubled
+// each attempt up to a cap. Var for test override.
+var readyRetryInterval = 200 * time.Millisecond
+
+// readyRetryMaxInterval caps the backoff between readiness polls. Var for
+// test override.
+var readyRetryMaxInterval = 2 * time.Second
+
+// WaitForReady polls the device's sysfs attributes until they are populated
+// enough to identify it as USB/removable storage with a medium present, or
+// until the attempts are exhausted. It replaces the fixed sleep previously
+// used to let a freshly-appeared device settle.
+//
+// Returns true if the device is ready and recognised as USB storage; false
+// otherwise (timeout, or definitively not USB storage).
+func (s *Service) WaitForReady(ctx context.Context, deviceName string) bool {
+	devicePath := filepath.Join("/dev", deviceName)
+	interval := readyRetryInterval
+
+	for attempt := 1; attempt <= readyRetryAttempts; attempt++ {
+		// Respect shutdown while polling.
+		select {
+		case <-ctx.Done():
+			return false
+		default:
+		}
+
+		if s.IsUSBStorage(deviceName) && s.hasMedium(devicePath) {
+			s.logger.Debug("device ready",
+				"device", deviceName, "attempts", attempt)
+			return true
+		}
+
+		s.logger.Debug("device not ready, retrying",
+			"device", deviceName, "attempt", attempt,
+			"next_interval", interval)
+
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(interval):
+		}
+
+		interval *= 2
+		if interval > readyRetryMaxInterval {
+			interval = readyRetryMaxInterval
+		}
+	}
+
+	s.logger.Info("device did not become ready in time", "device", deviceName,
+		"attempts", readyRetryAttempts)
+	return false
+}
 // IsUSBStorage checks if a device is USB (or removable SD) storage using the
 // registered checker strategies.
 func (s *Service) IsUSBStorage(device string) bool {
