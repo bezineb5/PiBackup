@@ -104,17 +104,9 @@ func runApp(cmd *cobra.Command, args []string) error {
 		logger.Info("uevent monitor started")
 	}
 
-	// Create services with dependency injection
-	deviceService := device.NewService(
-		logger,
-		realFS,
-		cfg.Feedback,
-		&device.Config{
-			MountPath:  cfg.USBMountPath,
-			BackupPath: cfg.BackupPath,
-		},
-	)
-
+	// Create services with dependency injection. The mount and backup
+	// services are created first because the device service depends on them;
+	// they are the single source of truth for mount/unmount and rsync.
 	mountService := mount.NewService(logger, realFS, cfg.ReadOnlyMounts)
 
 	backupService := backup.NewService(
@@ -124,6 +116,18 @@ func runApp(cmd *cobra.Command, args []string) error {
 		&backup.Config{
 			BackupPath: cfg.BackupPath,
 		},
+	)
+
+	deviceService := device.NewService(
+		logger,
+		realFS,
+		cfg.Feedback,
+		&device.Config{
+			MountPath:  cfg.USBMountPath,
+			BackupPath: cfg.BackupPath,
+		},
+		mountService,
+		backupService,
 	)
 
 	// Create and run application

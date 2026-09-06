@@ -1,20 +1,25 @@
 // Package backup provides backup functionality using rsync.
+//
+// This package is the single home for the actual backup workflow:
+// deciding whether a mounted source should be backed up, computing its
+// backup name, running rsync, and performing post-backup disk flushing.
 package backup
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
+	"math/rand/v2"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/benjamin/pibackup/pibackup-go/feedback"
 	"github.com/benjamin/pibackup/pibackup-go/fs"
 )
 
-// Service handles backup operations
+// Service handles backup operations.
 type Service struct {
 	logger   *slog.Logger
 	fs       fs.FileSystem
@@ -22,12 +27,12 @@ type Service struct {
 	config   *Config
 }
 
-// Config holds configuration for the backup service
+// Config holds configuration for the backup service.
 type Config struct {
 	BackupPath string
 }
 
-// NewService creates a new backup service
+// NewService creates a new backup service.
 func NewService(
 	logger *slog.Logger,
 	fs fs.FileSystem,
@@ -42,134 +47,122 @@ func NewService(
 	}
 }
 
-// RunRsyncBackup executes the rsync command to perform the actual backup
-func (s *Service) RunRsyncBackup(ctx context.Context, source, destination, device, deviceName string) error {
-	rsyncArgs := []string{
-		"-a",                                  // Archive mode
-		"--chmod=Du=rwx,Dgo=rwx,Fu=rw,Fog=rw", // Preserve permissions
+// Skip indicates the source was intentionally skipped (e.g. .backupignore or
+// no valid filesystem), as opposed to an error during backup.
+type Skip struct {
+	Reason string
+}
+
+func (s Skip) Error() string { return "backup skipped: " + s.Reason }
+
+// Run performs a full backup of the contents mounted at mountPoint into the
+// backup directory, using deviceName for feedback and logging.
+//
+// It returns:
+//   - nil on success
+//   - a Skip error when the source should be ignored (.backupignore, or an
+//     invalid/inaccessible filesystem)
+//   - any other error from the backup process
+func (s *Service) Run(ctx context.Context, mountPoint, device, deviceName string) error {
+	// Validate filesystem before doing anything destructive.
+	if !s.hasValidFilesystem(mountPoint) {
+		s.notifyError(deviceName, "No valid filesystem")
+		return Skip{Reason: "no valid filesystem"}
 	}
 
-	// Add debug-level flags only in debug mode
-	// Note: Would need log level passed to service for this
-	// For now, we'll skip debug flags to avoid circular dependencies
-
-	rsyncArgs = append(rsyncArgs,
-		filepath.Join(source, ""),      // Source (with trailing slash for rsync)
-		filepath.Join(destination, ""), // Destination (with trailing slash for rsync)
-	)
-
-	// Run rsync
-	cmd := exec.CommandContext(ctx, "rsync", rsyncArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		s.logger.Error("rsync failed", "device", device, "error", err)
-		if s.feedback != nil {
-			s.feedback.Notify(feedback.Event{
-				Type:      feedback.EventError,
-				Message:   "Backup failed",
-				Device:    deviceName,
-				Progress:  0,
-				Error:     err,
-				Timestamp: time.Now(),
-			})
-		}
-		return fmt.Errorf("rsync failed: %w", err)
+	// Honour the opt-out marker on the source.
+	if s.shouldSkipBackup(mountPoint) {
+		s.notify(deviceName, feedback.EventWarning,
+			fmt.Sprintf("Backup skipped: %s (.backupignore)", deviceName), 0)
+		return Skip{Reason: ".backupignore present"}
 	}
+
+	startTime := time.Now()
+	backupName := s.getBackupName(mountPoint)
+	backupDir := filepath.Join(s.config.BackupPath, backupName)
+
+	s.logger.Info("preparing backup", "device", device, "source", mountPoint, "destination", backupDir)
+	s.notify(deviceName, feedback.EventProgress, fmt.Sprintf("Backing up: %s", deviceName), 30)
+
+	sourcePath := s.getRsyncSourcePath(mountPoint, deviceName)
+
+	if err := s.runRsync(ctx, sourcePath, backupDir, device, deviceName); err != nil {
+		return err
+	}
+
+	s.performPostBackupTasks(backupDir)
+
+	duration := time.Since(startTime)
+	s.logger.Info("backup completed successfully",
+		"device", device, "destination", backupDir, "duration_seconds", duration.Seconds())
+	s.notify(deviceName, feedback.EventSuccess,
+		fmt.Sprintf("Backup completed in %.1fs", duration.Seconds()), 100)
 
 	return nil
 }
 
-// PerformPostBackupTasks handles post-backup operations
-func (s *Service) PerformPostBackupTasks(backupDir string) {
-	// Flush disk buffers
-	cmd := exec.CommandContext(context.Background(), "sync")
-	if err := cmd.Run(); err != nil {
-		s.logger.Warn("failed to flush disk buffers", "error", err)
+// runRsync executes the rsync command to copy the source into the destination.
+func (s *Service) runRsync(ctx context.Context, source, destination, device, deviceName string) error {
+	// Archive mode preserves permissions/times/ownership/symlinks; the chmod
+	// flag normalises the on-disk permissions of the backup copies.
+	rsyncArgs := []string{
+		"-a",
+		"--chmod=Du=rwx,Dgo=rwx,Fu=rw,Fog=rw",
 	}
 
-	// Update timestamps
-	cmd = exec.CommandContext(context.Background(), "touch", backupDir)
-	if err := cmd.Run(); err != nil {
+	// rsync copies the *contents* of a source dir when it ends with a slash,
+	// and the dir itself when it does not. We always want the contents.
+	sourcePath := strings.TrimSuffix(source, "/") + "/"
+	destPath := strings.TrimSuffix(destination, "/") + "/"
+	rsyncArgs = append(rsyncArgs, sourcePath, destPath)
+
+	cmd := exec.CommandContext(ctx, "rsync", rsyncArgs...)
+	// Capture rsync output so failures land in the structured log instead of
+	// being lost on stdout/stderr.
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		s.logger.Error("rsync failed",
+			"device", device, "error", err, "output", string(out))
+		s.notifyError(deviceName, "Backup failed")
+		return fmt.Errorf("rsync failed: %w (output: %s)", err, string(out))
+	}
+	return nil
+}
+
+// performPostBackupTasks flushes the destination disk buffers and refreshes
+// the destination directory timestamp so the most recent backup is obvious.
+func (s *Service) performPostBackupTasks(backupDir string) {
+	if err := exec.CommandContext(context.Background(), "sync").Run(); err != nil {
+		s.logger.Warn("failed to flush disk buffers", "error", err)
+	}
+	if err := exec.CommandContext(context.Background(), "touch", backupDir).Run(); err != nil {
 		s.logger.Warn("failed to update destination timestamp", "error", err)
 	}
 }
 
-// HasValidFilesystem checks if mount point has valid filesystem
-func (s *Service) HasValidFilesystem(mountPoint string) bool {
+// hasValidFilesystem reports whether the mount point exists and is readable.
+// An empty but readable directory is considered valid.
+func (s *Service) hasValidFilesystem(mountPoint string) bool {
 	s.logger.Debug("checking filesystem validity", "mount_point", mountPoint)
-	if s.feedback != nil {
-		s.feedback.Notify(feedback.Event{
-			Type:      feedback.EventStatus,
-			Message:   fmt.Sprintf("Checking filesystem: %s", mountPoint),
-			Device:    "",
-			Progress:  0,
-			Timestamp: time.Now(),
-		})
-	}
 
-	// Check if mount point exists and is accessible
 	if _, err := s.fs.Stat(mountPoint); err != nil {
 		s.logger.Debug("mount point not accessible", "mount_point", mountPoint, "error", err)
-		if s.feedback != nil {
-			s.feedback.Notify(feedback.Event{
-				Type:      feedback.EventWarning,
-				Message:   fmt.Sprintf("Mount point not accessible: %s (%v)", mountPoint, err),
-				Device:    "",
-				Progress:  0,
-				Error:     err,
-				Timestamp: time.Now(),
-			})
-		}
-
-		// Try to list the parent directory to see what's there
-		parentDir := filepath.Join(filepath.Dir(mountPoint))
-		if entries, err := s.fs.ReadDir(parentDir); err == nil {
-			s.logger.Debug("parent directory contents", "parent", parentDir, "entries", len(entries))
-			for _, entry := range entries {
-				s.logger.Debug("directory entry", "name", entry.Name(), "is_dir", entry.IsDir())
-			}
-		}
-
 		return false
 	}
 
-	// Check if mount point has any files
 	files, err := s.fs.ReadDir(mountPoint)
 	if err != nil {
 		s.logger.Debug("failed to read mount point directory", "mount_point", mountPoint, "error", err)
-		if s.feedback != nil {
-			s.feedback.Notify(feedback.Event{
-				Type:      feedback.EventWarning,
-				Message:   fmt.Sprintf("Cannot read mount point: %s (%v)", mountPoint, err),
-				Device:    "",
-				Progress:  0,
-				Error:     err,
-				Timestamp: time.Now(),
-			})
-		}
 		return false
 	}
 
 	s.logger.Debug("filesystem check", "mount_point", mountPoint, "file_count", len(files))
-	if s.feedback != nil {
-		s.feedback.Notify(feedback.Event{
-			Type:      feedback.EventStatus,
-			Message:   fmt.Sprintf("Filesystem check: %d files found", len(files)),
-			Device:    "",
-			Progress:  0,
-			Timestamp: time.Now(),
-		})
-	}
-
-	// Consider it valid if we can read the directory, even if empty
 	return true
 }
 
-// ShouldSkipBackup checks if backup should be skipped
-func (s *Service) ShouldSkipBackup(mountPoint string) bool {
-	// Check for .backupignore file at the root of the device
+// shouldSkipBackup reports whether a .backupignore marker is present at the
+// root of the mounted source.
+func (s *Service) shouldSkipBackup(mountPoint string) bool {
 	ignoreFile := filepath.Join(mountPoint, ".backupignore")
 	if _, err := s.fs.Stat(ignoreFile); err == nil {
 		s.logger.Info("backup skipped due to .backupignore file", "device", mountPoint)
@@ -177,3 +170,166 @@ func (s *Service) ShouldSkipBackup(mountPoint string) bool {
 	}
 	return false
 }
+
+// getBackupName returns a stable, human-friendly name for this backup.
+// Priority: an existing unique.id on the device; otherwise the device's
+// blkid UUID/serial; otherwise a freshly generated 6-char ID written back
+// to the device; otherwise a timestamp fallback.
+func (s *Service) getBackupName(mountPoint string) string {
+	// 1. Existing unique.id on the source.
+	uniqueIDPath := filepath.Join(mountPoint, "unique.id")
+	if data, err := s.fs.ReadFile(uniqueIDPath); err == nil {
+		if name := strings.TrimSpace(string(data)); name != "" {
+			s.logger.Debug("using unique.id from device", "id", name)
+			return name
+		}
+	}
+
+	// 2. Device UUID/serial from blkid (does not touch the source).
+	if deviceID := s.getDeviceIdentifierFromMount(mountPoint); deviceID != "" {
+		s.logger.Info("using device identifier as backup name",
+			"mount_point", mountPoint, "id", deviceID)
+		return deviceID
+	}
+
+	// 3. Generate a new ID and try to persist it on the source.
+	uniqueID := s.generateUniqueID()
+	if err := s.fs.WriteFile(uniqueIDPath, []byte(uniqueID), 0644); err == nil {
+		s.logger.Info("generated and stored unique ID", "device", mountPoint, "id", uniqueID)
+		return uniqueID
+	} else {
+		s.logger.Warn("failed to store unique ID on device",
+			"device", mountPoint, "error", err)
+	}
+
+	// 4. Timestamp fallback.
+	return fmt.Sprintf("backup_%s", time.Now().Format("20060102_150405"))
+}
+
+// generateUniqueID creates a random 6-character alphanumeric ID.
+func (s *Service) generateUniqueID() string {
+	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	b := make([]byte, 6)
+	for i := range b {
+		b[i] = charset[rand.IntN(len(charset))]
+	}
+	return string(b)
+}
+
+// getDeviceIdentifierFromMount looks up the block device backing mountPoint in
+// /proc/mounts and returns a sanitised blkid UUID or serial for it.
+func (s *Service) getDeviceIdentifierFromMount(mountPoint string) string {
+	data, err := s.fs.ReadFile("/proc/mounts")
+	if err != nil {
+		s.logger.Debug("failed to read /proc/mounts", "error", err)
+		return ""
+	}
+
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		if fields[1] != mountPoint {
+			continue
+		}
+		devicePath := fields[0]
+		s.logger.Debug("found device for mount point",
+			"device", devicePath, "mount_point", mountPoint)
+
+		out, err := exec.Command("blkid", "-s", "UUID", "-s", "SERIAL", "-o", "value", devicePath).Output()
+		if err != nil {
+			s.logger.Debug("failed to get device info with blkid",
+				"device", devicePath, "error", err)
+			return ""
+		}
+		if id := strings.TrimSpace(string(out)); id != "" {
+			if safe := s.sanitizeFilename(id); safe != "" {
+				s.logger.Debug("using device identifier", "identifier", safe)
+				return safe
+			}
+		}
+		return s.sanitizeFilename(devicePath)
+	}
+	return ""
+}
+
+// getRsyncSourcePath returns the optimal rsync source path. If the mount point
+// contains a single top-level directory matching the device name, that
+// directory is used to avoid an extra nesting level in the backup.
+func (s *Service) getRsyncSourcePath(mountPoint, deviceName string) string {
+	entries, err := s.fs.ReadDir(mountPoint)
+	if err != nil {
+		s.logger.Debug("could not read mount point directory",
+			"mount_point", mountPoint, "error", err)
+		return mountPoint
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && entry.Name() == deviceName {
+			s.logger.Info("using device directory as source to avoid extra level",
+				"dir", entry.Name())
+			return filepath.Join(mountPoint, deviceName)
+		}
+	}
+	return mountPoint
+}
+
+// sanitizeFilename makes a string safe for use as a filename.
+func (s *Service) sanitizeFilename(name string) string {
+	var result strings.Builder
+	for _, r := range name {
+		if !isSafeFilenameRune(r) {
+			result.WriteRune('_')
+		} else {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
+func isSafeFilenameRune(r rune) bool {
+	if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+		return true
+	}
+	switch r {
+	case '-', '_', '.', ' ':
+		return true
+	}
+	return false
+}
+
+// notify is a small helper to emit a feedback event when a feedback sink exists.
+func (s *Service) notify(device string, t feedback.EventType, msg string, progress float64) {
+	if s.feedback == nil {
+		return
+	}
+	s.feedback.Notify(feedback.Event{
+		Type:      t,
+		Message:   msg,
+		Device:    device,
+		Progress:  progress,
+		Timestamp: time.Now(),
+	})
+}
+
+// notifyError emits an error feedback event.
+func (s *Service) notifyError(device, msg string) {
+	s.notify(device, feedback.EventError, msg, 0)
+}
+
+// isAllDigits reports whether s is non-empty and all digits.
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+

@@ -8,9 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/benjamin/pibackup/pibackup-go/backup"
 	"github.com/benjamin/pibackup/pibackup-go/config"
 	"github.com/benjamin/pibackup/pibackup-go/device"
 	fspkg "github.com/benjamin/pibackup/pibackup-go/fs"
+	"github.com/benjamin/pibackup/pibackup-go/mount"
 )
 
 // Test that the filesystem mock works correctly
@@ -58,6 +60,8 @@ func TestDeviceService_Creation(t *testing.T) {
 			MountPath:  "/media",
 			BackupPath: "/share",
 		},
+		mount.NewService(logger, mockFS, false),
+		backup.NewService(logger, mockFS, nil, &backup.Config{BackupPath: "/share"}),
 	)
 
 	if service == nil {
