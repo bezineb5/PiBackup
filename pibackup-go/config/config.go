@@ -80,8 +80,10 @@ func setDefaults() {
 	viper.SetDefault("webdav.username", "")
 	viper.SetDefault("webdav.password", "")
 
-	// Mount settings
-	viper.SetDefault("mount.readonly", false)
+	// Mount settings: read-only by default to protect the source card. The
+	// camera SD only ever needs to be read from; mounting it read-only makes
+	// accidental corruption impossible at the filesystem layer.
+	viper.SetDefault("mount.readonly", true)
 
 	// Feedback settings
 	viper.SetDefault("feedback.type", "touchphat")

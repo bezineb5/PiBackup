@@ -21,10 +21,11 @@ import (
 
 // Service handles backup operations.
 type Service struct {
-	logger   *slog.Logger
-	fs       fs.FileSystem
-	feedback feedback.Feedback
-	config   *Config
+	logger     *slog.Logger
+	fs         fs.FileSystem
+	feedback   feedback.Feedback
+	config     *Config
+	names      *nameRegistry
 }
 
 // Config holds configuration for the backup service.
@@ -44,6 +45,7 @@ func NewService(
 		fs:       fs,
 		feedback: feedback,
 		config:   config,
+		names:    newNameRegistry(fs, config.BackupPath),
 	}
 }
 
@@ -171,39 +173,47 @@ func (s *Service) shouldSkipBackup(mountPoint string) bool {
 	return false
 }
 
-// getBackupName returns a stable, human-friendly name for this backup.
-// Priority: an existing unique.id on the device; otherwise the device's
-// blkid UUID/serial; otherwise a freshly generated 6-char ID written back
-// to the device; otherwise a timestamp fallback.
+// getBackupName returns a stable, human-friendly name for this backup, without
+// ever writing to the source card.
+//
+// Resolution order:
+//  1. An existing unique.id file on the source is honoured (read-only) for
+//     backward compatibility with cards previously stamped by older builds.
+//  2. The Pi-side name registry, keyed by the device's stable blkid UUID/serial.
+//     On first sight a fresh 6-char ID is generated and persisted there.
+//  3. A timestamp fallback if no stable identifier could be determined.
 func (s *Service) getBackupName(mountPoint string) string {
-	// 1. Existing unique.id on the source.
-	uniqueIDPath := filepath.Join(mountPoint, "unique.id")
-	if data, err := s.fs.ReadFile(uniqueIDPath); err == nil {
+	// 1. Existing unique.id on the source (read-only; never written).
+	if data, err := s.fs.ReadFile(filepath.Join(mountPoint, "unique.id")); err == nil {
 		if name := strings.TrimSpace(string(data)); name != "" {
 			s.logger.Debug("using unique.id from device", "id", name)
 			return name
 		}
 	}
 
-	// 2. Device UUID/serial from blkid (does not touch the source).
-	if deviceID := s.getDeviceIdentifierFromMount(mountPoint); deviceID != "" {
-		s.logger.Info("using device identifier as backup name",
-			"mount_point", mountPoint, "id", deviceID)
-		return deviceID
+	// 2. Stable device identifier + Pi-side name registry.
+	deviceKey := s.getDeviceIdentifierFromMount(mountPoint)
+	if deviceKey != "" {
+		if name, err := s.names.Lookup(deviceKey); err == nil && name != "" {
+			s.logger.Info("using registered device name", "id", deviceKey, "name", name)
+			return name
+		}
+		// First time we see this device: mint a name and persist it on the Pi.
+		name := s.generateUniqueID()
+		if stored, err := s.names.Assign(deviceKey, name); err == nil {
+			s.logger.Info("registered new device name", "id", deviceKey, "name", stored)
+			return stored
+		} else {
+			s.logger.Warn("failed to persist device name, using ephemeral name",
+				"id", deviceKey, "name", name, "error", err)
+			return name
+		}
 	}
 
-	// 3. Generate a new ID and try to persist it on the source.
-	uniqueID := s.generateUniqueID()
-	if err := s.fs.WriteFile(uniqueIDPath, []byte(uniqueID), 0644); err == nil {
-		s.logger.Info("generated and stored unique ID", "device", mountPoint, "id", uniqueID)
-		return uniqueID
-	} else {
-		s.logger.Warn("failed to store unique ID on device",
-			"device", mountPoint, "error", err)
-	}
-
-	// 4. Timestamp fallback.
-	return fmt.Sprintf("backup_%s", time.Now().Format("20060102_150405"))
+	// 3. Timestamp fallback (no stable identifier available).
+	name := fmt.Sprintf("backup_%s", time.Now().Format("20060102_150405"))
+	s.logger.Info("using timestamp backup name (no stable device identifier)", "name", name)
+	return name
 }
 
 // generateUniqueID creates a random 6-character alphanumeric ID.
@@ -216,8 +226,9 @@ func (s *Service) generateUniqueID() string {
 	return string(b)
 }
 
-// getDeviceIdentifierFromMount looks up the block device backing mountPoint in
-// /proc/mounts and returns a sanitised blkid UUID or serial for it.
+// getDeviceIdentifierFromMount looks up the block device backing mountPoint
+// in /proc/mounts and returns a sanitised blkid UUID or serial for it. It only
+// reads from the source (via blkid); it never writes to the card.
 func (s *Service) getDeviceIdentifierFromMount(mountPoint string) string {
 	data, err := s.fs.ReadFile("/proc/mounts")
 	if err != nil {
