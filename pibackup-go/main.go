@@ -86,6 +86,9 @@ func runApp(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to setup logging: %w", err)
 	}
+	// Set the base logger as the default so package-level slog.* calls
+	// (WebDAV, touchphat) use the same handlers as the rest of the app.
+	slog.SetDefault(logger)
 
 	// Create watcher (fallback if uevent fails)
 	watcher, err := fsnotify.NewWatcher()
@@ -96,7 +99,7 @@ func runApp(cmd *cobra.Command, args []string) error {
 
 	// Create uevent monitor (primary device detection)
 	var ueventMonitor *uevent.Monitor
-	ueventMonitor, err = uevent.NewMonitor(logger)
+	ueventMonitor, err = uevent.NewMonitor(logger.With("component", "uevent"))
 	if err != nil {
 		logger.Warn("failed to create uevent monitor, will use fsnotify fallback", "error", err)
 		ueventMonitor = nil
@@ -107,10 +110,12 @@ func runApp(cmd *cobra.Command, args []string) error {
 	// Create services with dependency injection. The mount and backup
 	// services are created first because the device service depends on them;
 	// they are the single source of truth for mount/unmount and rsync.
-	mountService := mount.NewService(logger, realFS, cfg.ReadOnlyMounts)
+	// Each component gets a named child logger so log lines carry a structured
+	// "component" field instead of a raw source file path.
+	mountService := mount.NewService(logger.With("component", "mount"), realFS, cfg.ReadOnlyMounts)
 
 	backupService := backup.NewService(
-		logger,
+		logger.With("component", "backup"),
 		realFS,
 		cfg.Feedback,
 		&backup.Config{
@@ -119,7 +124,7 @@ func runApp(cmd *cobra.Command, args []string) error {
 	)
 
 	deviceService := device.NewService(
-		logger,
+		logger.With("component", "device"),
 		realFS,
 		cfg.Feedback,
 		&device.Config{
@@ -133,7 +138,7 @@ func runApp(cmd *cobra.Command, args []string) error {
 	// Create and run application
 	app := NewApp(
 		cfg,
-		logger,
+		logger.With("component", "app"),
 		watcher,
 		ueventMonitor,
 		deviceService,
@@ -180,12 +185,15 @@ func setupLogging(cfg *config.Config) (*slog.Logger, error) {
 		Compress:   viper.GetBool("logging.compress"),   // Compress old files
 	}
 
-	// Create a multi-handler that writes JSON to file and human-readable text to console
+	// Create a multi-handler that writes JSON to file and human-readable text to console.
+	// AddSource is intentionally off: source paths baked in at build time leak the
+	// build machine's filesystem into logs. Instead, each component is given a
+	// named child logger (logger.With("component", ...)) so log lines carry a
+	// clean, structured "component" field rather than a noisy file path.
 	logger := slog.New(
 		NewMultiHandler(
 			slog.NewJSONHandler(fileWriter, &slog.HandlerOptions{
-				Level:     cfg.LogLevel,
-				AddSource: true,
+				Level: cfg.LogLevel,
 			}),
 			slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 				Level:       cfg.LogLevel,

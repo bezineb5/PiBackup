@@ -79,25 +79,3 @@ func TestProcessDevice(t *testing.T) {
 	_ = err
 }
 
-func TestProcessExistingDevices(t *testing.T) {
-	// Create a mock filesystem
-	mockFS := &fs.MockFileSystem{}
-
-	// Create services with mocks
-	logger := slog.Default()
-	mountSvc := mount.NewService(logger, mockFS, false)
-	backupSvc := backup.NewService(logger, mockFS, nil, &backup.Config{
-		BackupPath: "/tmp/backups",
-	})
-	config := &Config{
-		MountPath:  "/tmp/mount",
-		BackupPath: "/tmp/backups",
-	}
-	service := NewService(logger, mockFS, nil, config, mountSvc, backupSvc)
-
-	// Test processing existing devices
-	ctx := context.Background()
-	service.ProcessExistingDevices(ctx)
-
-	// Verify no panic occurred
-}

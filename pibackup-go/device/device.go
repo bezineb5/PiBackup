@@ -243,31 +243,6 @@ func (s *Service) ProcessDevice(ctx context.Context, device string) error {
 	return nil
 }
 
-// ProcessExistingDevices processes all currently connected devices.
-func (s *Service) ProcessExistingDevices(ctx context.Context) {
-	s.logger.Info("processing existing devices")
-	s.notify("", feedback.EventProgress, "Scanning for existing devices...", 0)
-
-	devices := s.FindUSBDevices()
-	s.logger.Info("device scan completed", "count", len(devices))
-	s.notify("", feedback.EventProgress, fmt.Sprintf("Found %d existing devices", len(devices)), 5)
-
-	for _, device := range devices {
-		s.logger.Info("processing existing device", "device", device, "type", "existing")
-		s.notify(filepath.Base(device), feedback.EventProgress,
-			fmt.Sprintf("Processing existing device: %s", filepath.Base(device)), 5)
-		if err := s.ProcessDevice(ctx, device); err != nil {
-			s.logger.Error("device processing error", "device", device, "error", err)
-		}
-	}
-
-	if len(devices) == 0 {
-		s.notify("", feedback.EventWarning, "No devices found to backup", 100)
-	} else {
-		s.notify("", feedback.EventSuccess, fmt.Sprintf("Processed %d device(s)", len(devices)), 100)
-	}
-}
-
 // ensureMounted returns the mount point for the device. If the device is
 // already mounted, the existing mount point is reused (and not unmounted by
 // us). Otherwise the first partition (or the whole device if it has none) is

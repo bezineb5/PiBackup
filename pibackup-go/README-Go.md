@@ -157,12 +157,16 @@ The application uses structured logging with automatic rotation:
 
 ### Log Format (file)
 ```json
-{"time":"2024-07-29T14:30:22.123Z","level":"INFO","msg":"application started","version":"1.0.0","source":"main.go:45"}
-{"time":"2024-07-29T14:30:22.124Z","level":"INFO","msg":"uevent monitor started","source":"app.go:138"}
-{"time":"2024-07-29T14:30:25.456Z","level":"INFO","msg":"uevent: device added","device":"/dev/sda","source":"app.go:178"}
-{"time":"2024-07-29T14:30:27.789Z","level":"INFO","msg":"device mounted successfully","device":"sda","mount_point":"/media/sda1","read_only":true,"source":"mount/mount.go:159"}
-{"time":"2024-07-29T14:30:45.456Z","level":"INFO","msg":"backup completed successfully","device":"/dev/sda1","destination":"/share/ABC123","duration_seconds":18.5,"source":"backup/backup.go:97"}
+{"time":"2024-07-29T14:30:22.123Z","level":"INFO","msg":"application started","version":"1.0.0","component":"app"}
+{"time":"2024-07-29T14:30:22.124Z","level":"INFO","msg":"uevent monitor started","component":"uevent"}
+{"time":"2024-07-29T14:30:25.456Z","level":"INFO","msg":"uevent: device added","device":"/dev/sda","component":"app"}
+{"time":"2024-07-29T14:30:27.789Z","level":"INFO","msg":"device mounted successfully","device":"sda","mount_point":"/media/sda1","read_only":true,"component":"mount"}
+{"time":"2024-07-29T14:30:45.456Z","level":"INFO","msg":"backup completed successfully","device":"/dev/sda1","destination":"/share/ABC123","duration_seconds":18.5,"component":"backup"}
 ```
+
+Each component (`app`, `mount`, `backup`, `device`, `uevent`) tags its own log
+lines with a structured `component` field instead of a raw source file path.
+Package-level callers (WebDAV, touchphat) use the base logger.
 
 ### Key Events
 - `application started` - Application startup with version
@@ -173,6 +177,7 @@ The application uses structured logging with automatic rotation:
 - `registered new device name` - A device was seen for the first time and named in the Pi-side registry
 - `shutting down` - Application shutdown
 - `backup already in progress` - Parallel operation prevented
+- `scan already in progress` - A manual backup press was collapsed into an in-flight scan
 
 ### Benefits of slog
 - **Structured JSON** - Easy to parse and analyze

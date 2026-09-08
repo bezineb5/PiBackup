@@ -90,9 +90,6 @@ func (app *App) cleanup() {
 
 // Run starts the application
 func (app *App) Run() error {
-	// Set as default logger
-	slog.SetDefault(app.logger)
-
 	app.logger.Info("application started", "version", "1.0.0")
 	if app.config.Feedback != nil {
 		app.config.Feedback.Notify(feedback.Event{
@@ -148,8 +145,10 @@ func (app *App) Run() error {
 		app.logger.Info("watcher started (fallback mode)", "path", "/dev")
 	}
 
-	// Process existing devices first
-	app.deviceService.ProcessExistingDevices(app.ctx)
+	// Process existing devices first, routed through the same per-device mutex
+	// as event-triggered backups so a card present at boot is not backed up
+	// twice (once by this scan, once by a queued 'add' uevent).
+	app.scanDevices()
 
 	// Set up signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -256,6 +255,22 @@ func (app *App) handleDeviceEvent(event fsnotify.Event) {
 	go app.processDevice(devicePath)
 }
 
+// scanDevices enumerates currently-connected devices and backs each up
+// through app.processDevice, which holds app.mu. This is the single entry
+// point for both the startup scan and the manual (touch) scan, so they share
+// the same per-device mutex as uevent-triggered backups. A device already
+// being processed (e.g. its 'add' uevent fired during the scan) is simply
+// skipped by processDevice's TryLock.
+func (app *App) scanDevices() {
+	app.logger.Info("scanning for devices")
+	devices := app.deviceService.FindUSBDevices()
+	app.logger.Info("device scan completed", "count", len(devices))
+	for _, device := range devices {
+		app.logger.Info("processing device", "device", device, "source", "scan")
+		app.processDevice(device)
+	}
+}
+
 // handleTouchEvent processes touch events from CAP1166
 func (app *App) handleTouchEvent(event feedback.TouchEventType) {
 	switch event {
@@ -269,7 +284,7 @@ func (app *App) handleTouchEvent(event feedback.TouchEventType) {
 			return
 		}
 		defer app.scanMu.Unlock()
-		app.deviceService.ProcessExistingDevices(app.ctx)
+		app.scanDevices()
 	case feedback.TouchShutdown:
 		app.logger.Info("shutdown triggered via touch")
 		// Cancel the app context first. This interrupts any in-flight backup:
