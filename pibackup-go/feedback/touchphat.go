@@ -6,7 +6,6 @@
 package feedback
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"time"
@@ -108,8 +107,7 @@ const LongPressDuration = 1 * time.Second
 type TouchPhatFeedback struct {
 	dev            *cap1xxx.Dev
 	ledStates      map[int]bool
-	ctx            context.Context
-	cancel         context.CancelFunc
+	done           chan struct{} // closed by Shutdown to stop background goroutines
 	touchChan      chan TouchEventType
 	touchStartTime map[int]time.Time
 }
@@ -142,13 +140,10 @@ func NewTouchPhatFeedback() (*TouchPhatFeedback, error) {
 		return nil, fmt.Errorf("failed to unlink LEDs: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
 	fb := &TouchPhatFeedback{
 		dev:            dev,
 		ledStates:      make(map[int]bool),
-		ctx:            ctx,
-		cancel:         cancel,
+		done:           make(chan struct{}),
 		touchChan:      make(chan TouchEventType, 10),
 		touchStartTime: make(map[int]time.Time),
 	}
@@ -194,13 +189,14 @@ func (fb *TouchPhatFeedback) Halt() error {
 	return nil
 }
 
-// Shutdown cleans up
+// Shutdown cleans up. It closes the done channel, which stops the touch
+// monitor and any BlinkLED goroutines, then releases the I2C device.
 func (fb *TouchPhatFeedback) Shutdown() {
 	slog.Info("Shutting down TouchPhat")
 	fb.BlinkLED(Power, 100*time.Millisecond, 5)
 	time.Sleep(1 * time.Second)
+	close(fb.done)
 	close(fb.touchChan)
-	fb.cancel()
 	for _, led := range ledMapping {
 		fb.dev.SetLED(led, false)
 	}
@@ -214,7 +210,7 @@ func (fb *TouchPhatFeedback) monitorTouchEvents() {
 
 	for {
 		select {
-		case <-fb.ctx.Done():
+		case <-fb.done:
 			return
 		default:
 		}
@@ -281,7 +277,7 @@ func (fb *TouchPhatFeedback) BlinkLED(feedbackFeature FeedbackFeature, duration 
 	go func() {
 		for range count {
 			select {
-			case <-fb.ctx.Done():
+			case <-fb.done:
 				return
 			default:
 			}

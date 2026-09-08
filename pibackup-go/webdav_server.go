@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,33 +16,31 @@ import (
 	"golang.org/x/net/webdav"
 )
 
-// WebDAVServer provides remote access to backup content
+// WebDAVServer provides remote access to backup content. Its lifecycle is
+// driven entirely by the context passed to Start: when that context is
+// cancelled the server drains in-flight requests and stops. There is no
+// stored context and no explicit Stop method.
 type WebDAVServer struct {
 	backupPath string
 	port       string
 	server     *http.Server
 	handler    *webdav.Handler
-	ctx        context.Context
-	cancel     context.CancelFunc
 	mu         sync.RWMutex
 	feedback   feedback.Feedback
 }
 
-// NewWebDAVServer creates a new WebDAV server for backup access
+// NewWebDAVServer creates a new WebDAV server for backup access.
 func NewWebDAVServer(backupPath, port string, fb feedback.Feedback) *WebDAVServer {
-	ctx, cancel := context.WithCancel(context.Background())
-
 	return &WebDAVServer{
 		backupPath: backupPath,
 		port:       port,
-		ctx:        ctx,
-		cancel:     cancel,
 		feedback:   fb,
 	}
 }
 
-// Start initializes and starts the WebDAV server
-func (w *WebDAVServer) Start() error {
+// Start initializes and starts the WebDAV server. ctx drives its lifecycle:
+// when ctx is cancelled the server drains in-flight requests and stops.
+func (w *WebDAVServer) Start(ctx context.Context) error {
 	// Create read-only file system for backups
 	fs := &ReadOnlyFileSystem{
 		root: w.backupPath,
@@ -66,10 +65,12 @@ func (w *WebDAVServer) Start() error {
 		},
 	}
 
-	// Create HTTP server
+	// Create HTTP server. BaseContext ties every request's context to ctx, so
+	// cancelling the app context cancels in-flight requests too.
 	w.server = &http.Server{
-		Addr:    ":" + w.port,
-		Handler: w.createMux(),
+		Addr:        ":" + w.port,
+		Handler:     w.createMux(),
+		BaseContext: func(_ net.Listener) context.Context { return ctx },
 	}
 
 	// Start server in background
@@ -93,6 +94,14 @@ func (w *WebDAVServer) Start() error {
 				})
 			}
 		}
+	}()
+
+	// When ctx is done (the app is shutting down), drain in-flight requests
+	// gracefully. This makes the server unwind purely from context
+	// cancellation, with no explicit Stop() to call.
+	go func() {
+		<-ctx.Done()
+		w.shutdown()
 	}()
 
 	return nil
@@ -207,10 +216,15 @@ func (w *WebDAVServer) listBackups() ([]string, error) {
 	return backups, nil
 }
 
-// Stop gracefully shuts down the WebDAV server
-func (w *WebDAVServer) Stop() error {
-	slog.Info("stopping WebDAV server")
-
+// shutdown drains in-flight requests with a short timeout. It is invoked by
+// the background goroutine in Start when the server's context is done (i.e.
+// the app is shutting down). The server's lifecycle is fully context-driven;
+// there is no explicit Stop() to call. Idempotent via http.Server.Shutdown's
+// own semantics (a second call returns immediately once the listener closed).
+func (w *WebDAVServer) shutdown() error {
+	if w.server == nil {
+		return nil
+	}
 	if w.feedback != nil {
 		w.feedback.Notify(feedback.Event{
 			Type:      feedback.EventStatus,
@@ -218,21 +232,15 @@ func (w *WebDAVServer) Stop() error {
 			Timestamp: time.Now(),
 		})
 	}
+	slog.Info("stopping WebDAV server")
 
-	// Cancel context
-	w.cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	// Shutdown HTTP server with timeout
-	if w.server != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		if err := w.server.Shutdown(ctx); err != nil {
-			slog.Error("error shutting down WebDAV server", "error", err)
-			return err
-		}
+	if err := w.server.Shutdown(ctx); err != nil {
+		slog.Error("error shutting down WebDAV server", "error", err)
+		return err
 	}
-
 	slog.Info("WebDAV server stopped")
 	return nil
 }
